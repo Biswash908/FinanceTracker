@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
-import { authService } from "../services/auth-service"
+import { authService } from "./src/services/auth-service"
 
 /**
  * A simple component to test the auth service independently

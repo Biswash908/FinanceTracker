@@ -17,6 +17,26 @@ class AuthService {
   private tokenData: TokenData | null = null
 
   /**
+   * Validate if we have a valid token or can get one
+   * This is used by App.tsx to check authentication status
+   */
+  async validateToken(): Promise<boolean> {
+    try {
+      // If we have a valid token, return true
+      if (this.tokenData && this.tokenData.expiresAt > Date.now()) {
+        return true
+      }
+
+      // Otherwise, try to get a new token
+      await this.getToken()
+      return true
+    } catch (error) {
+      console.error("Token validation failed:", error)
+      return false
+    }
+  }
+
+  /**
    * Get a valid bearer token, refreshing if necessary
    */
   async getToken(): Promise<string> {
@@ -155,6 +175,20 @@ class AuthService {
   async refreshToken(): Promise<string> {
     this.tokenData = null
     return this.getToken()
+  }
+
+  /**
+   * Check if user is currently authenticated
+   */
+  isAuthenticated(): boolean {
+    return this.tokenData !== null && this.tokenData.expiresAt > Date.now()
+  }
+
+  /**
+   * Clear authentication data (logout)
+   */
+  logout(): void {
+    this.tokenData = null
   }
 }
 
