@@ -11,7 +11,8 @@ import { authService } from "../services/auth-service"
 // Simple date formatter
 const formatDate = (dateString) => {
   const date = new Date(dateString)
-  return date.toISOString().split("T")[0] // YYYY-MM-DD format
+  // Format as YYYY-MM-DD
+  return date.toISOString().split("T")[0]
 }
 
 // Get current date and first day of current month
@@ -103,122 +104,129 @@ const TransactionsScreen = () => {
 
   // FIXED: useEffect moved outside of testAuth function
   useEffect(() => {
+    console.log("Date range changed - fetching transactions:", { startDate, endDate })
     fetchTransactions()
   }, [startDate, endDate])
 
   // Fetch transactions using the auth service
   // Fetch transactions using the auth service
-const fetchTransactions = async () => {
-  try {
-    setLoading(true)
-    setError(null)
+  const fetchTransactions = async () => {
+    try {
+      setLoading(true)
+      setError(null)
 
-    console.log("Fetching transactions with:", {
-      entity_id: ENTITY_ID,
-      account_id: ACCOUNT_ID,
-      from: startDate,
-      to: endDate,
-    })
-
-    // Get a valid token from the auth service
-    const token = await authService.getToken()
-
-    // Use the correct endpoint without /list and without query parameters
-    const response = await fetch("https://sandbox.leantech.me/data/v1/transactions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-        "Scope": "api"
-      },
-      body: JSON.stringify({
+      console.log("Fetching transactions with:", {
         entity_id: ENTITY_ID,
         account_id: ACCOUNT_ID,
-        from: startDate,  // Include date parameters in the request body
-        to: endDate       // Include date parameters in the request body
-      }),
-    })
+        from: startDate,
+        to: endDate,
+      })
 
-    // Log the response status for debugging
-    console.log("Response status:", response.status)
+      // Get a valid token from the auth service
+      const token = await authService.getToken()
 
-    if (!response.ok) {
-      // If we get a 401 Unauthorized, try refreshing the token once
-      if (response.status === 401) {
-        console.log("Token expired, refreshing...")
-        const newToken = await authService.refreshToken()
+      // Use the correct endpoint without /list and without query parameters
+      const response = await fetch("https://sandbox.leantech.me/data/v1/transactions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          Scope: "api",
+        },
+        body: JSON.stringify({
+          entity_id: ENTITY_ID,
+          account_id: ACCOUNT_ID,
+          from_date: startDate, // Changed from 'from' to 'from_date'
+          to_date: endDate, // Changed from 'to' to 'to_date'
+        }),
+      })
 
-        // Retry the request with the new token
-        const retryResponse = await fetch("https://sandbox.leantech.me/data/v1/transactions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${newToken}`,
-            "Scope": "api"
-          },
-          body: JSON.stringify({
-            entity_id: ENTITY_ID,
-            account_id: ACCOUNT_ID,
-            from: startDate,
-            to: endDate
-          }),
-        })
+      // Log the response status for debugging
+      console.log("Response status:", response.status)
 
-        // Log retry response status
-        console.log("Retry response status:", retryResponse.status)
+      if (!response.ok) {
+        // If we get a 401 Unauthorized, try refreshing the token once
+        if (response.status === 401) {
+          console.log("Token expired, refreshing...")
+          const newToken = await authService.refreshToken()
 
-        if (!retryResponse.ok) {
-          // Get response text for better error details
-          const errorText = await retryResponse.text()
-          console.error("API Error response:", errorText)
-          throw new Error(`API error: ${retryResponse.status} ${errorText}`)
+          // Retry the request with the new token
+          const retryResponse = await fetch("https://sandbox.leantech.me/data/v1/transactions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${newToken}`,
+              Scope: "api",
+            },
+            body: JSON.stringify({
+              entity_id: ENTITY_ID,
+              account_id: ACCOUNT_ID,
+              from_date: startDate, // Changed from 'from' to 'from_date'
+              to_date: endDate, // Changed from 'to' to 'to_date'
+            }),
+          })
+
+          // Log retry response status
+          console.log("Retry response status:", retryResponse.status)
+
+          if (!retryResponse.ok) {
+            // Get response text for better error details
+            const errorText = await retryResponse.text()
+            console.error("API Error response:", errorText)
+            throw new Error(`API error: ${retryResponse.status} ${errorText}`)
+          }
+
+          const data = await retryResponse.json()
+          if (data.payload && data.payload.transactions) {
+            console.log(`Fetched ${data.payload.transactions.length} transactions`)
+            setTransactions(data.payload.transactions)
+          } else {
+            console.error("API Error:", data)
+            setError("Failed to fetch transactions: " + (data.message || "Unknown error"))
+          }
+          return
         }
 
-        const data = await retryResponse.json()
-        if (data.payload && data.payload.transactions) {
-          console.log(`Fetched ${data.payload.transactions.length} transactions`)
-          setTransactions(data.payload.transactions)
-        } else {
-          console.error("API Error:", data)
-          setError("Failed to fetch transactions: " + (data.message || "Unknown error"))
-        }
-        return
+        // Get response text for better error details
+        const errorText = await response.text()
+        console.error("API Error response:", errorText)
+        throw new Error(`API error: ${response.status} ${errorText}`)
       }
 
-      // Get response text for better error details
-      const errorText = await response.text()
-      console.error("API Error response:", errorText)
-      throw new Error(`API error: ${response.status} ${errorText}`)
-    }
+      const data = await response.json()
 
-    const data = await response.json()
-
-    if (data.payload && data.payload.transactions) {
-      console.log(`Fetched ${data.payload.transactions.length} transactions`)
-      setTransactions(data.payload.transactions)
-    } else {
-      console.error("API Error:", data)
-      setError("Failed to fetch transactions: " + (data.message || "Unknown error"))
+      if (data.payload && data.payload.transactions) {
+        console.log(`Fetched ${data.payload.transactions.length} transactions`)
+        setTransactions(data.payload.transactions)
+      } else {
+        console.error("API Error:", data)
+        setError("Failed to fetch transactions: " + (data.message || "Unknown error"))
+      }
+    } catch (err) {
+      console.error("Fetch error:", err)
+      setError("Error fetching transactions: " + err.message)
+    } finally {
+      setLoading(false)
     }
-  } catch (err) {
-    console.error("Fetch error:", err)
-    setError("Error fetching transactions: " + err.message)
-  } finally {
-    setLoading(false)
   }
-}
 
   const onChangeStartDate = (event, selectedDate) => {
     setShowStartDatePicker(false)
     if (selectedDate) {
-      setStartDate(formatDate(selectedDate))
+      // Format the date and log it for debugging
+      const formattedDate = formatDate(selectedDate)
+      console.log("Selected start date:", formattedDate)
+      setStartDate(formattedDate)
     }
   }
 
   const onChangeEndDate = (event, selectedDate) => {
     setShowEndDatePicker(false)
     if (selectedDate) {
-      setEndDate(formatDate(selectedDate))
+      // Format the date and log it for debugging
+      const formattedDate = formatDate(selectedDate)
+      console.log("Selected end date:", formattedDate)
+      setEndDate(formattedDate)
     }
   }
 
