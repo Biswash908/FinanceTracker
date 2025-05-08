@@ -1,14 +1,9 @@
-import React, { useState, useEffect } from "react"
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TextInput, 
-  FlatList, 
-  TouchableOpacity,
-  ActivityIndicator,
-} from "react-native"
+"use client"
+
+import { useState, useEffect } from "react"
+import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, ActivityIndicator } from "react-native"
 import { ACCOUNT_ID, ENTITY_ID } from "@env"
+import { useTheme } from "../context/ThemeContext"
 
 // Components
 import TransactionCard from "../components/TransactionCard"
@@ -47,6 +42,8 @@ const categoryFilters = [
 ]
 
 const SearchScreen = () => {
+  const { isDarkMode } = useTheme()
+
   // State
   const [transactions, setTransactions] = useState([])
   const [filteredTransactions, setFilteredTransactions] = useState([])
@@ -58,14 +55,14 @@ const SearchScreen = () => {
   const [endDate, setEndDate] = useState(getCurrentDate())
   const [showStartDatePicker, setShowStartDatePicker] = useState(false)
   const [showEndDatePicker, setShowEndDatePicker] = useState(false)
-  
+
   // Fetch transactions when component mounts or dates change
   useEffect(() => {
     const loadTransactions = async () => {
       try {
         setLoading(true)
         setError(null)
-        
+
         const data = await fetchTransactions(ENTITY_ID, ACCOUNT_ID, startDate, endDate)
         setTransactions(data)
         setFilteredTransactions(data)
@@ -76,34 +73,33 @@ const SearchScreen = () => {
         setLoading(false)
       }
     }
-    
+
     loadTransactions()
   }, [startDate, endDate])
-  
+
   // Filter transactions when search query or category changes
   useEffect(() => {
     if (!transactions.length) return
-    
-    const filtered = transactions.filter(transaction => {
+
+    const filtered = transactions.filter((transaction) => {
       // Filter by search query
-      const matchesQuery = searchQuery === "" || 
+      const matchesQuery =
+        searchQuery === "" ||
         transaction.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
         transaction.amount.toString().includes(searchQuery)
-      
+
       // Filter by category
-      const category = Number.parseFloat(transaction.amount) > 0 
-        ? "income" 
-        : categorizeTransaction(transaction.description)
-        
-      const matchesCategory = selectedCategory === "All" || 
-        category.toLowerCase() === selectedCategory.toLowerCase()
-      
+      const category =
+        Number.parseFloat(transaction.amount) > 0 ? "income" : categorizeTransaction(transaction.description)
+
+      const matchesCategory = selectedCategory === "All" || category.toLowerCase() === selectedCategory.toLowerCase()
+
       return matchesQuery && matchesCategory
     })
-    
+
     setFilteredTransactions(filtered)
   }, [searchQuery, selectedCategory, transactions])
-  
+
   // Date picker handlers
   const onChangeStartDate = (event, selectedDate) => {
     setShowStartDatePicker(false)
@@ -120,39 +116,39 @@ const SearchScreen = () => {
       setEndDate(formattedDate)
     }
   }
-  
+
   // Render transaction item
   const renderTransactionItem = ({ item }) => {
-    const category = Number.parseFloat(item.amount) > 0 
-      ? "income" 
-      : categorizeTransaction(item.description)
-      
+    const category = Number.parseFloat(item.amount) > 0 ? "income" : categorizeTransaction(item.description)
+
     return (
-      <TransactionCard 
-        transaction={item} 
+      <TransactionCard
+        transaction={item}
         category={category}
         onPress={() => console.log("Transaction pressed:", item.id)}
       />
     )
   }
-  
+
   // Render category filter chip
   const renderCategoryChip = (category) => {
     const isSelected = category === selectedCategory
-    
+
     return (
       <TouchableOpacity
         key={category}
         style={[
           styles.categoryChip,
-          isSelected && styles.selectedCategoryChip
+          isDarkMode && { backgroundColor: "#333" },
+          isSelected && (isDarkMode ? { backgroundColor: "#2C5282" } : styles.selectedCategoryChip),
         ]}
         onPress={() => setSelectedCategory(category)}
       >
-        <Text 
+        <Text
           style={[
             styles.categoryChipText,
-            isSelected && styles.selectedCategoryChipText
+            isDarkMode && { color: "#DDD" },
+            isSelected && styles.selectedCategoryChipText,
           ]}
         >
           {category}
@@ -160,25 +156,33 @@ const SearchScreen = () => {
       </TouchableOpacity>
     )
   }
-  
+
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Search Transactions</Text>
+        <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Search Transactions</Text>
       </View>
-      
+
       {/* Search Bar */}
       <View style={styles.searchContainer}>
         <TextInput
-          style={styles.searchInput}
+          style={[
+            styles.searchInput,
+            isDarkMode && {
+              backgroundColor: "#2A2A2A",
+              color: "#FFF",
+              borderColor: "#444",
+            },
+          ]}
           placeholder="Search by description or amount..."
+          placeholderTextColor={isDarkMode ? "#888" : "#999"}
           value={searchQuery}
           onChangeText={setSearchQuery}
           clearButtonMode="while-editing"
         />
       </View>
-      
+
       {/* Date Range Picker */}
       <DateRangePicker
         startDate={startDate}
@@ -189,8 +193,9 @@ const SearchScreen = () => {
         setShowEndDatePicker={setShowEndDatePicker}
         onChangeStartDate={onChangeStartDate}
         onChangeEndDate={onChangeEndDate}
+        isDarkMode={isDarkMode}
       />
-      
+
       {/* Category Filters */}
       <View style={styles.categoryFiltersContainer}>
         <FlatList
@@ -202,26 +207,26 @@ const SearchScreen = () => {
           contentContainerStyle={styles.categoryFiltersList}
         />
       </View>
-      
+
       {/* Results Count */}
       <View style={styles.resultsCountContainer}>
-        <Text style={styles.resultsCount}>
-          {filteredTransactions.length} {filteredTransactions.length === 1 ? 'transaction' : 'transactions'} found
+        <Text style={[styles.resultsCount, isDarkMode && { color: "#AAA" }]}>
+          {filteredTransactions.length} {filteredTransactions.length === 1 ? "transaction" : "transactions"} found
         </Text>
       </View>
-      
+
       {/* Error message */}
       {error && (
-        <View style={styles.errorContainer}>
+        <View style={[styles.errorContainer, isDarkMode && { backgroundColor: "#3A1212" }]}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
-      
+
       {/* Transactions List */}
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3498db" />
-          <Text style={styles.loadingText}>Loading transactions...</Text>
+          <Text style={[styles.loadingText, isDarkMode && { color: "#AAA" }]}>Loading transactions...</Text>
         </View>
       ) : (
         <FlatList
@@ -231,7 +236,7 @@ const SearchScreen = () => {
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>
+              <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
                 No transactions match your search criteria.
               </Text>
             </View>
@@ -269,6 +274,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   categoryFiltersContainer: {
     marginBottom: 16,

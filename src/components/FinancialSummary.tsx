@@ -1,133 +1,158 @@
-import React, { useState } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, Animated } from "react-native"
-import { formatCurrency } from "../utils/formatters"
+"use client"
 
-interface CategoryTotal {
-  [key: string]: number
-}
+import type React from "react"
+import { useState } from "react"
+import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
+import { useTheme } from "../context/ThemeContext"
 
 interface FinancialSummaryProps {
   income: number
   expenses: number
   balance: number
-  categoryTotals: CategoryTotal
+  categoryTotals: Record<string, number>
+  currency?: string
 }
 
-const FinancialSummary = ({ income, expenses, balance, categoryTotals }: FinancialSummaryProps) => {
-  const [isExpanded, setIsExpanded] = useState(true)
-  const [animation] = useState(new Animated.Value(1))
+const FinancialSummary: React.FC<FinancialSummaryProps> = ({
+  income,
+  expenses,
+  balance,
+  categoryTotals,
+  currency = "AED",
+}) => {
+  const [expanded, setExpanded] = useState(true)
+  const { isDarkMode } = useTheme()
 
-  const toggleExpand = () => {
-    const toValue = isExpanded ? 0 : 1
-    
-    Animated.timing(animation, {
-      toValue,
-      duration: 300,
-      useNativeDriver: false,
-    }).start()
-    
-    setIsExpanded(!isExpanded)
+  // Format currency
+  const formatCurrency = (amount, currency = "AED") => {
+    return `${Math.abs(amount).toFixed(2)} ${currency}`
   }
 
-  const maxHeight = animation.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 500], // Adjust based on content
-  })
+  // Define category order (most important first, other last)
+  const categoryOrder = [
+    "food",
+    "transport",
+    "utilities",
+    "housing",
+    "shopping",
+    "health",
+    "education",
+    "entertainment",
+    "charity",
+    "other",
+  ]
+
+  // Sort categories by the defined order
+  const sortedCategories = Object.entries(categoryTotals)
+    .filter(([category, amount]) => amount > 0 && category.toLowerCase() !== "income")
+    .sort(([a], [b]) => {
+      const indexA = categoryOrder.indexOf(a.toLowerCase())
+      const indexB = categoryOrder.indexOf(b.toLowerCase())
+      return indexA - indexB
+    })
+
+  // Get category color
+  const getCategoryColor = (category: string): string => {
+    const categoryColors = {
+      food: "#FF5733", // Orange-red
+      transport: "#33A8FF", // Blue
+      utilities: "#33FFC1", // Teal
+      housing: "#8C33FF", // Purple
+      shopping: "#FF33A8", // Pink
+      health: "#33FF57", // Green
+      education: "#FFC133", // Yellow
+      entertainment: "#FF3333", // Red
+      charity: "#33FF33", // Bright green
+      other: "#AAAAAA", // Gray
+    }
+
+    return categoryColors[category.toLowerCase()] || "#AAAAAA"
+  }
 
   return (
-    <View style={styles.container}>
-      <TouchableOpacity 
-        style={styles.header} 
-        onPress={toggleExpand}
-        activeOpacity={0.8}
+    <View
+      style={[
+        styles.container,
+        isDarkMode ? { backgroundColor: "#1E1E1E", borderColor: "#333" } : { backgroundColor: "#fff" },
+      ]}
+    >
+      <TouchableOpacity
+        style={[styles.header, isDarkMode ? { backgroundColor: "#2C5282" } : { backgroundColor: "#3498db" }]}
+        onPress={() => setExpanded(!expanded)}
       >
         <Text style={styles.title}>Financial Summary</Text>
-        <Text style={styles.toggleIcon}>{isExpanded ? "▼" : "►"}</Text>
+        <Text style={styles.toggleIcon}>{expanded ? "▼" : "►"}</Text>
       </TouchableOpacity>
 
-      <Animated.View style={[styles.content, { maxHeight }]}>
-        <View style={styles.summaryRow}>
-          <Text style={styles.label}>Income:</Text>
-          <Text style={[styles.value, styles.incomeText]}>
-            +{formatCurrency(income)}
-          </Text>
-        </View>
+      {expanded && (
+        <View style={styles.content}>
+          <View style={styles.summaryRow}>
+            <Text style={[styles.label, isDarkMode && { color: "#DDD" }]}>Income:</Text>
+            <Text style={[styles.value, styles.incomeText]}>+{formatCurrency(income, currency)}</Text>
+          </View>
 
-        <View style={styles.summaryRow}>
-          <Text style={styles.label}>Expenses:</Text>
-          <Text style={[styles.value, styles.expenseText]}>
-            -{formatCurrency(expenses)}
-          </Text>
-        </View>
+          <View style={styles.summaryRow}>
+            <Text style={[styles.label, isDarkMode && { color: "#DDD" }]}>Expenses:</Text>
+            <Text style={[styles.value, styles.expenseText]}>-{formatCurrency(expenses, currency)}</Text>
+          </View>
 
-        <View style={[styles.summaryRow, styles.balanceRow]}>
-          <Text style={styles.balanceLabel}>Balance:</Text>
-          <Text style={[
-            styles.value, 
-            balance >= 0 ? styles.incomeText : styles.expenseText
-          ]}>
-            {balance >= 0 ? "+" : "-"}
-            {formatCurrency(Math.abs(balance))}
-          </Text>
-        </View>
+          <View style={[styles.summaryRow, styles.balanceRow, isDarkMode && { borderTopColor: "#444" }]}>
+            <Text style={[styles.balanceLabel, isDarkMode && { color: "#EEE" }]}>Balance:</Text>
+            <Text style={[styles.balanceValue, balance >= 0 ? styles.incomeText : styles.expenseText]}>
+              {balance >= 0 ? "+" : "-"}
+              {formatCurrency(Math.abs(balance), currency)}
+            </Text>
+          </View>
 
-        <View style={styles.divider} />
+          <Text style={[styles.sectionTitle, isDarkMode && { color: "#EEE" }]}>Expense Categories</Text>
 
-        <Text style={styles.categoryTitle}>Expense Categories</Text>
-        
-        {Object.entries(categoryTotals)
-          .filter(([_, amount]) => amount > 0)
-          .sort(([_, a], [__, b]) => b - a)
-          .map(([category, amount]) => (
-            <View key={category} style={styles.categoryRow}>
-              <View style={styles.categoryNameContainer}>
-                <View style={[styles.categoryDot, { backgroundColor: getCategoryColor(category) }]} />
-                <Text style={styles.categoryName}>
-                  {category.charAt(0).toUpperCase() + category.slice(1)}
-                </Text>
+          {sortedCategories.length > 0 ? (
+            sortedCategories.map(([category, amount]) => (
+              <View key={category} style={styles.categoryRow}>
+                <View style={styles.categoryNameContainer}>
+                  <View
+                    style={[
+                      styles.categoryColorDot,
+                      {
+                        backgroundColor: getCategoryColor(category),
+                      },
+                    ]}
+                  />
+                  <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>
+                    {category.charAt(0).toUpperCase() + category.slice(1)}
+                  </Text>
+                </View>
+                <Text style={styles.categoryAmount}>-{formatCurrency(amount, currency)}</Text>
               </View>
-              <Text style={styles.categoryAmount}>{formatCurrency(amount)}</Text>
-            </View>
-          ))}
-      </Animated.View>
+            ))
+          ) : (
+            <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+              No expense data available for this period.
+            </Text>
+          )}
+        </View>
+      )}
     </View>
   )
-}
-
-// Helper function to get category colors
-const getCategoryColor = (category: string): string => {
-  const colors: {[key: string]: string} = {
-    food: "#FF9800",
-    shopping: "#9C27B0",
-    entertainment: "#2196F3",
-    utilities: "#607D8B",
-    transport: "#4CAF50",
-    education: "#3F51B5",
-    health: "#F44336",
-    charity: "#8BC34A",
-    housing: "#795548",
-    other: "#9E9E9E",
-  }
-  
-  return colors[category] || colors.other
 }
 
 const styles = StyleSheet.create({
   container: {
     borderRadius: 12,
-    marginBottom: 16,
     overflow: "hidden",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    backgroundColor: "#3498db",
     padding: 16,
   },
   title: {
@@ -136,36 +161,39 @@ const styles = StyleSheet.create({
     color: "#fff",
   },
   toggleIcon: {
-    fontSize: 18,
+    fontSize: 16,
     color: "#fff",
   },
   content: {
-    backgroundColor: "#fff",
     padding: 16,
-    overflow: "hidden",
   },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  balanceRow: {
-    marginTop: 4,
-    marginBottom: 16,
+    marginBottom: 8,
   },
   label: {
     fontSize: 16,
     color: "#555",
-    fontWeight: "500",
-  },
-  balanceLabel: {
-    fontSize: 18,
-    color: "#333",
-    fontWeight: "bold",
   },
   value: {
     fontSize: 16,
+    fontWeight: "500",
+  },
+  balanceRow: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#eee",
+    marginBottom: 16,
+  },
+  balanceLabel: {
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+  },
+  balanceValue: {
+    fontSize: 18,
     fontWeight: "bold",
   },
   incomeText: {
@@ -174,41 +202,43 @@ const styles = StyleSheet.create({
   expenseText: {
     color: "#e74c3c",
   },
-  divider: {
-    height: 1,
-    backgroundColor: "#eee",
-    marginBottom: 16,
-  },
-  categoryTitle: {
+  sectionTitle: {
     fontSize: 16,
-    fontWeight: "bold",
+    fontWeight: "600",
     marginBottom: 12,
     color: "#333",
   },
   categoryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
+    marginBottom: 8,
     alignItems: "center",
-    marginBottom: 10,
   },
   categoryNameContainer: {
     flexDirection: "row",
     alignItems: "center",
   },
-  categoryDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+  categoryColorDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     marginRight: 8,
   },
   categoryName: {
     fontSize: 14,
-    color: "#333",
+    color: "#555",
   },
   categoryAmount: {
     fontSize: 14,
     fontWeight: "500",
     color: "#e74c3c",
+  },
+  emptyText: {
+    fontSize: 14,
+    color: "#666",
+    fontStyle: "italic",
+    textAlign: "center",
+    marginTop: 10,
   },
 })
 

@@ -1,37 +1,28 @@
-import React, { useState } from "react"
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  TouchableOpacity, 
-  Switch, 
-  ScrollView, 
-  Alert,
-  Share,
-} from "react-native"
+"use client"
+
+import { useState } from "react"
+import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, Alert, Share } from "react-native"
 import { authService } from "../services/auth-service"
+import { useTheme } from "../context/ThemeContext"
+import { MaterialIcons } from "@expo/vector-icons"
 
 const SettingsScreen = () => {
+  // Theme context
+  const { isDarkMode, toggleTheme } = useTheme()
+
   // State
-  const [darkMode, setDarkMode] = useState(false)
   const [currency, setCurrency] = useState("AED")
   const [isRefreshing, setIsRefreshing] = useState(false)
-  
+
   // Currency options
-  const currencies = ["AED", "USD", "EUR", "GBP", "INR"]
-  
-  // Toggle dark mode
-  const toggleDarkMode = () => {
-    setDarkMode(!darkMode)
-    // In a real app, you would apply the theme change here
-  }
-  
+  const currencies = ["AED", "USD", "EUR", "GBP", "NPR", "INR"]
+
   // Change currency
   const changeCurrency = (newCurrency) => {
     setCurrency(newCurrency)
     // In a real app, you would update the app's currency setting
   }
-  
+
   // Refresh token
   const refreshToken = async () => {
     try {
@@ -44,13 +35,13 @@ const SettingsScreen = () => {
       setIsRefreshing(false)
     }
   }
-  
+
   // Export logs
   const exportLogs = async () => {
     try {
       // In a real app, you would gather logs from your logging system
       const logs = "Sample log data for demonstration purposes"
-      
+
       await Share.share({
         message: logs,
         title: "App Logs",
@@ -59,86 +50,95 @@ const SettingsScreen = () => {
       Alert.alert("Error", `Failed to export logs: ${error.message}`)
     }
   }
-  
+
   // Render a setting item with a switch
   const renderSwitchSetting = (title, value, onValueChange, description = null) => (
-    <View style={styles.settingItem}>
+    <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
       <View style={styles.settingTextContainer}>
-        <Text style={styles.settingTitle}>{title}</Text>
-        {description && <Text style={styles.settingDescription}>{description}</Text>}
+        <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>{title}</Text>
+        {description && <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>{description}</Text>}
       </View>
-      <Switch
-        value={value}
-        onValueChange={onValueChange}
-        trackColor={{ false: "#767577", true: "#3498db" }}
-        thumbColor={value ? "#fff" : "#f4f3f4"}
-      />
+      <View style={styles.themeIndicator}>
+        {title === "Dark Mode" && (
+          <View style={styles.themeIconContainer}>
+            <MaterialIcons
+              name={isDarkMode ? "dark-mode" : "light-mode"}
+              size={20}
+              color={isDarkMode ? "#FFC107" : "#FDB813"}
+              style={styles.themeIcon}
+            />
+          </View>
+        )}
+        <Switch
+          value={value}
+          onValueChange={onValueChange}
+          trackColor={{ false: "#767577", true: "#3498db" }}
+          thumbColor={value ? "#fff" : "#f4f3f4"}
+        />
+      </View>
     </View>
   )
-  
+
   // Render a setting item with a button
   const renderButtonSetting = (title, onPress, buttonText, description = null, loading = false) => (
-    <View style={styles.settingItem}>
+    <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
       <View style={styles.settingTextContainer}>
-        <Text style={styles.settingTitle}>{title}</Text>
-        {description && <Text style={styles.settingDescription}>{description}</Text>}
+        <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>{title}</Text>
+        {description && <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>{description}</Text>}
       </View>
-      <TouchableOpacity 
-        style={styles.settingButton}
+      <TouchableOpacity
+        style={[styles.settingButton, isDarkMode && { backgroundColor: "#2C5282" }]}
         onPress={onPress}
         disabled={loading}
       >
-        <Text style={styles.settingButtonText}>
-          {loading ? "Loading..." : buttonText}
-        </Text>
+        <Text style={styles.settingButtonText}>{loading ? "Loading..." : buttonText}</Text>
       </TouchableOpacity>
     </View>
   )
-  
+
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Settings</Text>
+        <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Settings</Text>
       </View>
-      
+
       {/* Appearance Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Appearance</Text>
-        
-        {renderSwitchSetting(
-          "Dark Mode",
-          darkMode,
-          toggleDarkMode,
-          "Switch between light and dark theme"
-        )}
+      <View style={[styles.section, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+        <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Appearance</Text>
+
+        {renderSwitchSetting("Dark Mode", isDarkMode, toggleTheme, "Switch between light and dark theme")}
       </View>
-      
+
       {/* Preferences Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Preferences</Text>
-        
-        <View style={styles.settingItem}>
+      <View style={[styles.section, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+        <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Preferences</Text>
+
+        <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
           <View style={styles.settingTextContainer}>
-            <Text style={styles.settingTitle}>Currency</Text>
-            <Text style={styles.settingDescription}>Select your preferred currency</Text>
+            <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>Currency</Text>
+            <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>
+              Select your preferred currency
+            </Text>
           </View>
         </View>
-        
+
         <View style={styles.currencyOptions}>
           {currencies.map((curr) => (
             <TouchableOpacity
               key={curr}
               style={[
                 styles.currencyOption,
-                currency === curr && styles.selectedCurrencyOption
+                isDarkMode && { backgroundColor: "#333" },
+                currency === curr && (isDarkMode ? { backgroundColor: "#2C5282" } : styles.selectedCurrencyOption),
               ]}
               onPress={() => changeCurrency(curr)}
             >
-              <Text 
+              <Text
                 style={[
                   styles.currencyOptionText,
-                  currency === curr && styles.selectedCurrencyOptionText
+                  isDarkMode && { color: "#DDD" },
+                  currency === curr && styles.selectedCurrencyOptionText,
                 ]}
               >
                 {curr}
@@ -147,36 +147,25 @@ const SettingsScreen = () => {
           ))}
         </View>
       </View>
-      
+
       {/* Account Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        
-        {renderButtonSetting(
-          "Refresh Token",
-          refreshToken,
-          "Refresh",
-          "Get a new authentication token",
-          isRefreshing
-        )}
+      <View style={[styles.section, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+        <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Account</Text>
+
+        {renderButtonSetting("Refresh Token", refreshToken, "Refresh", "Get a new authentication token", isRefreshing)}
       </View>
-      
+
       {/* Developer Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Developer</Text>
-        
-        {renderButtonSetting(
-          "Export Logs",
-          exportLogs,
-          "Export",
-          "Share app logs for debugging"
-        )}
+      <View style={[styles.section, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+        <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Developer</Text>
+
+        {renderButtonSetting("Export Logs", exportLogs, "Export", "Share app logs for debugging")}
       </View>
-      
+
       {/* App Info */}
       <View style={styles.appInfo}>
-        <Text style={styles.appVersion}>Version 1.0.0</Text>
-        <Text style={styles.appCopyright}>© 2023 Finance Tracker</Text>
+        <Text style={[styles.appVersion, isDarkMode && { color: "#AAA" }]}>Version 1.0.0</Text>
+        <Text style={[styles.appCopyright, isDarkMode && { color: "#777" }]}>© 2025 DragX's Meso Tracker</Text>
       </View>
     </ScrollView>
   )
@@ -206,6 +195,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   sectionTitle: {
     fontSize: 18,
@@ -233,6 +224,16 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     marginTop: 4,
+  },
+  themeIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  themeIconContainer: {
+    marginRight: 10,
+  },
+  themeIcon: {
+    marginRight: 4,
   },
   settingButton: {
     backgroundColor: "#3498db",

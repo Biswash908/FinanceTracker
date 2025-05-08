@@ -1,13 +1,9 @@
-import React, { useState, useEffect } from "react"
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  ActivityIndicator 
-} from "react-native"
+"use client"
+
+import { useState, useEffect } from "react"
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native"
 import { ACCOUNT_ID, ENTITY_ID } from "@env"
+import { useTheme } from "../context/ThemeContext"
 
 // Components
 import BalanceCard from "../components/BalanceCard"
@@ -19,17 +15,19 @@ import { calculateFinancials } from "../utils/categorizer"
 import { formatCurrency } from "../utils/formatters"
 
 const DashboardScreen = () => {
+  const { isDarkMode } = useTheme()
+
   // State
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [timeRange, setTimeRange] = useState("month") // "week" or "month"
-  
+
   // Get date range based on selected time range
   const getDateRange = () => {
     const now = new Date()
     const endDate = now.toISOString().split("T")[0]
-    
+
     let startDate
     if (timeRange === "week") {
       // Get first day of current week (Sunday)
@@ -40,17 +38,17 @@ const DashboardScreen = () => {
       // Get first day of current month
       startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0]
     }
-    
+
     return { startDate, endDate }
   }
-  
+
   // Fetch transactions when component mounts or time range changes
   useEffect(() => {
     const loadTransactions = async () => {
       try {
         setLoading(true)
         setError(null)
-        
+
         const { startDate, endDate } = getDateRange()
         const data = await fetchTransactions(ENTITY_ID, ACCOUNT_ID, startDate, endDate)
         setTransactions(data)
@@ -61,18 +59,18 @@ const DashboardScreen = () => {
         setLoading(false)
       }
     }
-    
+
     loadTransactions()
   }, [timeRange])
-  
+
   // Calculate financial summary
-  const { income, expenses, balance, categoryTotals } = calculateFinancials(transactions)
-  
+  const { income, expenses, balance, categoryTotals } = calculateFinancials(transactions || [])
+
   // Toggle time range
   const toggleTimeRange = () => {
     setTimeRange(timeRange === "month" ? "week" : "month")
   }
-  
+
   // Format category data for chart
   const categoryData = Object.entries(categoryTotals)
     .filter(([_, amount]) => amount > 0)
@@ -82,14 +80,14 @@ const DashboardScreen = () => {
       color: getCategoryColor(category),
     }))
     .sort((a, b) => b.amount - a.amount)
-  
+
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Dashboard</Text>
-        <TouchableOpacity 
-          style={styles.refreshButton}
+        <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Dashboard</Text>
+        <TouchableOpacity
+          style={[styles.refreshButton, isDarkMode && { backgroundColor: "#2C5282" }]}
           onPress={() => {
             setTimeRange(timeRange) // Trigger a refresh
           }}
@@ -97,105 +95,108 @@ const DashboardScreen = () => {
           <Text style={styles.refreshButtonText}>Refresh</Text>
         </TouchableOpacity>
       </View>
-      
+
       {/* Time Range Toggle */}
-      <View style={styles.timeRangeContainer}>
-        <TouchableOpacity 
+      <View style={[styles.timeRangeContainer, isDarkMode && { backgroundColor: "#333" }]}>
+        <TouchableOpacity
           style={[
-            styles.timeRangeButton, 
-            timeRange === "week" && styles.activeTimeRangeButton
+            styles.timeRangeButton,
+            timeRange === "week" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeTimeRangeButton),
           ]}
           onPress={() => setTimeRange("week")}
         >
-          <Text 
+          <Text
             style={[
               styles.timeRangeText,
-              timeRange === "week" && styles.activeTimeRangeText
+              isDarkMode && { color: "#AAA" },
+              timeRange === "week" && (isDarkMode ? { color: "#FFF" } : styles.activeTimeRangeText),
             ]}
           >
             This Week
           </Text>
         </TouchableOpacity>
-        
-        <TouchableOpacity 
+
+        <TouchableOpacity
           style={[
-            styles.timeRangeButton, 
-            timeRange === "month" && styles.activeTimeRangeButton
+            styles.timeRangeButton,
+            timeRange === "month" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeTimeRangeButton),
           ]}
           onPress={() => setTimeRange("month")}
         >
-          <Text 
+          <Text
             style={[
               styles.timeRangeText,
-              timeRange === "month" && styles.activeTimeRangeText
+              isDarkMode && { color: "#AAA" },
+              timeRange === "month" && (isDarkMode ? { color: "#FFF" } : styles.activeTimeRangeText),
             ]}
           >
             This Month
           </Text>
         </TouchableOpacity>
       </View>
-      
+
       {/* Error message */}
       {error && (
-        <View style={styles.errorContainer}>
+        <View style={[styles.errorContainer, isDarkMode && { backgroundColor: "#3A1212" }]}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
       )}
-      
+
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#3498db" />
-          <Text style={styles.loadingText}>Loading dashboard...</Text>
+          <Text style={[styles.loadingText, isDarkMode && { color: "#AAA" }]}>Loading dashboard...</Text>
         </View>
       ) : (
         <>
           {/* Balance Cards */}
           <View style={styles.balanceCardsContainer}>
-            <BalanceCard 
+            <BalanceCard
               title="Balance"
               amount={balance}
               type={balance >= 0 ? "positive" : "negative"}
+              isDarkMode={isDarkMode}
             />
-            
+
             <View style={styles.incomeExpenseRow}>
-              <BalanceCard 
+              <BalanceCard
                 title="Income"
                 amount={income}
                 type="income"
                 style={{ flex: 1, marginRight: 8 }}
+                isDarkMode={isDarkMode}
               />
-              
-              <BalanceCard 
+
+              <BalanceCard
                 title="Expenses"
                 amount={expenses}
                 type="expense"
                 style={{ flex: 1, marginLeft: 8 }}
+                isDarkMode={isDarkMode}
               />
             </View>
           </View>
-          
+
           {/* Category Breakdown */}
-          <View style={styles.categorySection}>
-            <Text style={styles.sectionTitle}>Spending by Category</Text>
-            
+          <View style={[styles.categorySection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+            <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Spending by Category</Text>
+
             {categoryData.length > 0 ? (
               <>
-                <CategoryChart data={categoryData} />
-                
+                <CategoryChart data={categoryData} isDarkMode={isDarkMode} />
+
                 <View style={styles.categoryList}>
                   {categoryData.map((category) => (
-                    <View key={category.name} style={styles.categoryItem}>
+                    <View
+                      key={category.name}
+                      style={[styles.categoryItem, isDarkMode && { borderBottomColor: "#333" }]}
+                    >
                       <View style={styles.categoryNameContainer}>
-                        <View 
-                          style={[
-                            styles.categoryDot, 
-                            { backgroundColor: category.color }
-                          ]} 
-                        />
-                        <Text style={styles.categoryName}>{category.name}</Text>
+                        <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                        <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>{category.name}</Text>
                       </View>
-                      <Text style={styles.categoryAmount}>
-                        {formatCurrency(category.amount)}
+                      <Text style={[styles.categoryAmount, { color: category.color }]}>
+                        {formatCurrency(category.amount, "NPR")}
                       </Text>
                     </View>
                   ))}
@@ -203,7 +204,7 @@ const DashboardScreen = () => {
               </>
             ) : (
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>
+                <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
                   No spending data available for this period.
                 </Text>
               </View>
@@ -229,7 +230,7 @@ const getCategoryColor = (category) => {
     housing: "#795548",
     other: "#9E9E9E",
   }
-  
+
   return colors[category] || colors.other
 }
 
@@ -306,6 +307,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   sectionTitle: {
     fontSize: 18,
@@ -341,7 +344,6 @@ const styles = StyleSheet.create({
   categoryAmount: {
     fontSize: 15,
     fontWeight: "500",
-    color: "#e74c3c",
   },
   loadingContainer: {
     padding: 32,

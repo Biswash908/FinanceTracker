@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
-import { SafeAreaView, StyleSheet, StatusBar, View, Text, ActivityIndicator, TouchableOpacity } from "react-native"
+import { View, Text, StyleSheet, ActivityIndicator, StatusBar, TouchableOpacity } from "react-native"
 import { NavigationContainer } from "@react-navigation/native"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { Feather } from "@expo/vector-icons"
@@ -11,8 +11,7 @@ import DashboardScreen from "./src/screens/DashboardScreen"
 import TransactionsScreen from "./src/screens/TransactionsScreen"
 import SettingsScreen from "./src/screens/SettingsScreen"
 
-// Context and Services
-import { ThemeProvider, useTheme } from "./src/context/ThemeContext"
+// Services
 import { authService } from "./src/services/auth-service"
 
 // Create bottom tab navigator
@@ -31,7 +30,6 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, errorInfo) {
     console.error("App Error:", error, errorInfo)
-    // Here you could send the error to your error reporting service
   }
 
   render() {
@@ -54,14 +52,9 @@ class ErrorBoundary extends React.Component {
 
 // Main Navigation Component
 const AppNavigator = () => {
-  const { theme } = useTheme()
-
   return (
     <NavigationContainer>
-      <StatusBar
-        barStyle={theme === "dark" ? "light-content" : "dark-content"}
-        backgroundColor={theme === "dark" ? "#121212" : "#ffffff"}
-      />
+      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       <Tab.Navigator
         screenOptions={({ route }) => ({
           tabBarIcon: ({ focused, color, size }) => {
@@ -78,12 +71,12 @@ const AppNavigator = () => {
             return <Feather name={iconName} size={size} color={color} />
           },
           tabBarActiveTintColor: "#3498db",
-          tabBarInactiveTintColor: theme === "dark" ? "#999" : "#666",
+          tabBarInactiveTintColor: "#666",
           headerShown: false,
           tabBarStyle: {
-            backgroundColor: theme === "dark" ? "#121212" : "#fff",
+            backgroundColor: "#fff",
             borderTopWidth: 1,
-            borderTopColor: theme === "dark" ? "#333" : "#eee",
+            borderTopColor: "#eee",
             paddingTop: 5,
             paddingBottom: 5,
             height: 60,
@@ -132,7 +125,7 @@ export default function App() {
   if (isLoading) {
     return (
       <View style={styles.splashContainer}>
-        <Text style={styles.splashTitle}>Finance Tracker</Text>
+        <Text style={styles.splashTitle}>DragX's Meso Tracker</Text>
         <ActivityIndicator size="large" color="#3498db" style={styles.splashLoader} />
       </View>
     )
@@ -140,11 +133,9 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      <ThemeProvider>
-        <SafeAreaView style={styles.container}>
-          <AppNavigator />
-        </SafeAreaView>
-      </ThemeProvider>
+      <View style={styles.container}>
+        <AppNavigator />
+      </View>
     </ErrorBoundary>
   )
 }

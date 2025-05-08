@@ -1,72 +1,70 @@
-import React from "react"
+import type React from "react"
 import { View, Text, StyleSheet } from "react-native"
-import { formatCurrency } from "../utils/formatters"
 
 interface BalanceCardProps {
   title: string
   amount: number
   type: "positive" | "negative" | "income" | "expense"
   style?: object
+  isDarkMode?: boolean
+  currency?: string
 }
 
-const BalanceCard = ({ title, amount, type, style }: BalanceCardProps) => {
-  // Determine card color based on type
-  const getCardStyle = () => {
-    switch (type) {
-      case "positive":
-        return styles.positiveCard
-      case "negative":
-        return styles.negativeCard
-      case "income":
-        return styles.incomeCard
-      case "expense":
-        return styles.expenseCard
-      default:
-        return {}
-    }
+const BalanceCard: React.FC<BalanceCardProps> = ({ title, amount, type, style, isDarkMode, currency = "AED" }) => {
+  // Format currency
+  const formatCurrency = (amount, currency = "AED") => {
+    return `${Math.abs(amount).toFixed(2)} ${currency}`
   }
-  
-  // Determine amount color based on type
-  const getAmountStyle = () => {
+
+  // Get color based on type
+  const getColor = () => {
     switch (type) {
       case "positive":
       case "income":
-        return styles.positiveAmount
+        return "#27ae60" // Green
       case "negative":
       case "expense":
-        return styles.negativeAmount
+        return "#e74c3c" // Red
       default:
-        return {}
+        return "#333"
     }
   }
-  
-  // Determine prefix based on type
-  const getPrefix = () => {
+
+  // Get background color based on type
+  const getBackgroundColor = () => {
+    if (isDarkMode) return "#1E1E1E"
+
     switch (type) {
       case "positive":
       case "income":
-        return "+"
+        return "#e6f7ef" // Light green
       case "negative":
       case "expense":
-        return "-"
+        return "#fdecea" // Light red
       default:
-        return ""
+        return "#f5f5f5"
     }
   }
-  
+
   return (
-    <View style={[styles.card, getCardStyle(), style]}>
-      <Text style={styles.title}>{title}</Text>
-      <Text style={[styles.amount, getAmountStyle()]}>
-        {getPrefix()} {formatCurrency(Math.abs(amount))}
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: getBackgroundColor() },
+        isDarkMode && { borderColor: "#333" },
+        style,
+      ]}
+    >
+      <Text style={[styles.title, isDarkMode && { color: "#DDD" }]}>{title}</Text>
+      <Text style={[styles.amount, { color: getColor() }]}>
+        {type === "income" || type === "positive" ? "+" : "-"} {formatCurrency(Math.abs(amount), currency)}
       </Text>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: "#fff",
+  container: {
     borderRadius: 12,
     padding: 16,
     shadowColor: "#000",
@@ -74,18 +72,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-  },
-  positiveCard: {
-    backgroundColor: "#e6f7ef",
-  },
-  negativeCard: {
-    backgroundColor: "#fdeaea",
-  },
-  incomeCard: {
-    backgroundColor: "#e6f7ef",
-  },
-  expenseCard: {
-    backgroundColor: "#fdeaea",
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   title: {
     fontSize: 16,
@@ -95,12 +83,6 @@ const styles = StyleSheet.create({
   amount: {
     fontSize: 24,
     fontWeight: "bold",
-  },
-  positiveAmount: {
-    color: "#27ae60",
-  },
-  negativeAmount: {
-    color: "#e74c3c",
   },
 })
 
