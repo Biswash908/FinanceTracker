@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useRef, useState, useEffect, useMemo } from "react"
+import { useRef, useState, useEffect } from "react"
 import { View, StyleSheet, Animated, PanResponder } from "react-native"
 
 interface CustomScrollbarProps {
@@ -23,33 +23,32 @@ const CustomScrollbar = ({
 }: CustomScrollbarProps) => {
   const [isScrolling, setIsScrolling] = useState(false)
   const lastTouchY = useRef(0)
-  const scrollYValue = useRef(0) // ✅ New
+  const scrollYValue = useRef(0)
 
-  // Update scrollYValue whenever scrollY changes
-  useEffect(() => {
-    const listenerId = scrollY.addListener(({ value }) => {
-      scrollYValue.current = value
-    })
-    return () => scrollY.removeListener(listenerId)
-  }, [scrollY])
+  // Calculate the scrollbar size based on the ratio of container to content
+  const scrollIndicatorHeight = Math.max(
+    40, // Minimum size for easy grabbing
+    (containerHeight / Math.max(contentHeight, 1)) * containerHeight,
+  )
 
-  const scrollIndicatorHeight = useMemo(() => {
-    return Math.max(
-      40,
-      (containerHeight / Math.max(contentHeight, 1)) * containerHeight,
-    )
-  }, [containerHeight, contentHeight])
-
+  // Calculate the maximum scroll distance and indicator offset
   const maxScroll = Math.max(0, contentHeight - containerHeight)
   const maxIndicatorOffset = Math.max(0, containerHeight - scrollIndicatorHeight)
 
-  const indicatorTranslateY = useMemo(() => {
-    return scrollY.interpolate({
-      inputRange: [0, maxScroll],
-      outputRange: [0, maxIndicatorOffset],
-      extrapolate: "clamp",
+  // Keep track of the scroll position
+  useEffect(() => {
+    const listener = scrollY.addListener(({ value }) => {
+      scrollYValue.current = value
     })
-  }, [scrollY, maxScroll, maxIndicatorOffset])
+    return () => scrollY.removeListener(listener)
+  }, [scrollY])
+
+  // Map the scroll position to the indicator position
+  const indicatorTranslateY = scrollY.interpolate({
+    inputRange: [0, maxScroll],
+    outputRange: [0, maxIndicatorOffset],
+    extrapolate: "clamp",
+  })
 
   const panResponder = useRef(
     PanResponder.create({
@@ -58,10 +57,15 @@ const CustomScrollbar = ({
       onPanResponderGrant: (evt) => {
         setIsScrolling(true)
         lastTouchY.current = evt.nativeEvent.locationY
-        if (setScrollEnabled) setScrollEnabled(false)
 
+        // Disable FlatList scrolling when scrollbar is being dragged
+        if (setScrollEnabled) {
+          setScrollEnabled(false)
+        }
+
+        // Jump to touched position
         const touchY = evt.nativeEvent.locationY
-        const scrollRatio = (touchY - scrollIndicatorHeight / 2) / maxIndicatorOffset
+        const scrollRatio = touchY / containerHeight
         const newScrollY = scrollRatio * maxScroll
 
         scrollViewRef.current?.scrollToOffset({
@@ -71,14 +75,11 @@ const CustomScrollbar = ({
       },
       onPanResponderMove: (evt, gestureState) => {
         const dy = gestureState.dy
-        const moveRatio = dy / maxIndicatorOffset
+        const moveRatio = dy / containerHeight
         const scrollDelta = moveRatio * maxScroll
 
-        const currentY = scrollYValue.current
-        const nextY = Math.max(0, Math.min(currentY + scrollDelta, maxScroll))
-
         scrollViewRef.current?.scrollToOffset({
-          offset: nextY,
+          offset: Math.max(0, Math.min(scrollYValue.current + scrollDelta, maxScroll)),
           animated: false,
         })
 
@@ -86,16 +87,25 @@ const CustomScrollbar = ({
       },
       onPanResponderRelease: () => {
         setIsScrolling(false)
-        if (setScrollEnabled) setScrollEnabled(true)
+
+        // Re-enable FlatList scrolling when scrollbar is released
+        if (setScrollEnabled) {
+          setScrollEnabled(true)
+        }
       },
       onPanResponderTerminate: () => {
         setIsScrolling(false)
-        if (setScrollEnabled) setScrollEnabled(true)
+
+        // Re-enable FlatList scrolling when scrollbar interaction is terminated
+        if (setScrollEnabled) {
+          setScrollEnabled(true)
+        }
       },
     }),
   ).current
 
-  if (contentHeight <= containerHeight || containerHeight === 0) return null
+  // Don't show scrollbar if content fits in container
+  if (contentHeight <= containerHeight) return null
 
   return (
     <View style={[styles.scrollbarContainer, { height: containerHeight }]}>
@@ -112,8 +122,8 @@ const CustomScrollbar = ({
                 ? "rgba(255, 255, 255, 0.9)"
                 : "rgba(255, 255, 255, 0.6)"
               : isScrolling
-              ? "rgba(0, 0, 0, 0.9)"
-              : "rgba(0, 0, 0, 0.6)",
+                ? "rgba(0, 0, 0, 0.9)"
+                : "rgba(0, 0, 0, 0.6)",
           },
         ]}
       />
