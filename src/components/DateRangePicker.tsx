@@ -45,10 +45,17 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
   // Format date to YYYY-MM-DD
   const formatDateToString = (date: Date): string => {
     try {
-      return date.toISOString().split("T")[0]
+      const year = date.getFullYear()
+      const month = String(date.getMonth() + 1).padStart(2, "0")
+      const day = String(date.getDate()).padStart(2, "0")
+      return `${year}-${month}-${day}`
     } catch (error) {
       console.error("Error formatting date to string:", error)
-      return new Date().toISOString().split("T")[0]
+      const now = new Date()
+      const year = now.getFullYear()
+      const month = String(now.getMonth() + 1).padStart(2, "0")
+      const day = String(now.getDate()).padStart(2, "0")
+      return `${year}-${month}-${day}`
     }
   }
 
@@ -57,13 +64,18 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
 
     if (selectedDate) {
       setLocalStartDate(selectedDate)
-      const formattedDate = formatDateToString(selectedDate)
-      console.log("New start date selected:", formattedDate)
+      // Format date as YYYY-MM-DD string
+      const year = selectedDate.getFullYear()
+      const month = String(selectedDate.getMonth() + 1).padStart(2, "0")
+      const day = String(selectedDate.getDate()).padStart(2, "0")
+      const formattedDate = `${year}-${month}-${day}`
+
+      console.log("New start date selected:", formattedDate, "Type:", typeof formattedDate)
 
       // Ensure end date is not before start date
       const endDateObj = new Date(endDate)
       if (selectedDate > endDateObj) {
-        const newEndDate = formatDateToString(selectedDate)
+        const newEndDate = formattedDate // Use same format for consistency
         console.log("Adjusting end date to match start date:", newEndDate)
         setLocalEndDate(selectedDate) // Update local end date
         onDateRangeChange(formattedDate, newEndDate)
@@ -78,13 +90,18 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
 
     if (selectedDate) {
       setLocalEndDate(selectedDate)
-      const formattedDate = formatDateToString(selectedDate)
-      console.log("New end date selected:", formattedDate)
+      // Format date as YYYY-MM-DD string
+      const year = selectedDate.getFullYear()
+      const month = String(selectedDate.getMonth() + 1).padStart(2, "0")
+      const day = String(selectedDate.getDate()).padStart(2, "0")
+      const formattedDate = `${year}-${month}-${day}`
+
+      console.log("New end date selected:", formattedDate, "Type:", typeof formattedDate)
 
       // Ensure start date is not after end date
       const startDateObj = new Date(startDate)
       if (selectedDate < startDateObj) {
-        const newStartDate = formatDateToString(selectedDate)
+        const newStartDate = formattedDate // Use same format for consistency
         console.log("Adjusting start date to match end date:", newStartDate)
         setLocalStartDate(selectedDate) // Update local start date
         onDateRangeChange(newStartDate, formattedDate)
@@ -96,6 +113,17 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
 
   // Predefined date ranges
   const dateRanges = [
+    {
+      label: "Today",
+      getRange: () => {
+        const now = new Date()
+        const today = formatDateToString(now)
+        return {
+          start: today,
+          end: today,
+        }
+      },
+    },
     {
       label: "This Month",
       getRange: () => {
@@ -139,6 +167,18 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
         return {
           start: formatDateToString(firstDay),
           end: formatDateToString(now),
+        }
+      },
+    },
+    {
+      label: "Last Year",
+      getRange: () => {
+        const now = new Date()
+        const firstDay = new Date(now.getFullYear() - 1, 0, 1)
+        const lastDay = new Date(now.getFullYear() - 1, 11, 31)
+        return {
+          start: formatDateToString(firstDay),
+          end: formatDateToString(lastDay),
         }
       },
     },

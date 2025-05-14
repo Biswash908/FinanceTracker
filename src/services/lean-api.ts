@@ -7,6 +7,21 @@ const MAX_RETRY_ATTEMPTS = 3
 const RETRY_DELAY_MS = 1000 // Start with 1 second delay
 
 /**
+ * Debug function to log API requests and responses
+ */
+const logApiCall = (name: string, request: any, response?: any) => {
+  console.log(`\n==== API CALL: ${name} ====`)
+  console.log("REQUEST:", JSON.stringify(request, null, 2))
+  if (response) {
+    console.log(
+      "RESPONSE:",
+      typeof response === "string" ? response.substring(0, 500) : JSON.stringify(response, null, 2),
+    )
+  }
+  console.log("==== END API CALL ====\n")
+}
+
+/**
  * Fetches all available accounts for an entity with caching
  *
  * @param entityId The entity ID
@@ -30,6 +45,13 @@ export const fetchAccounts = async (entityId: string): Promise<any[]> => {
     // Use the accounts API endpoint
     const url = `${API_BASE_URL}/data/v1/accounts`
 
+    const requestBody = {
+      entity_id: entityId,
+    }
+
+    // Log the request for debugging
+    logApiCall("fetchAccounts", requestBody)
+
     const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
@@ -37,13 +59,12 @@ export const fetchAccounts = async (entityId: string): Promise<any[]> => {
         Authorization: `Bearer ${token}`,
         Scope: "api",
       },
-      body: JSON.stringify({
-        entity_id: entityId,
-      }),
+      body: JSON.stringify(requestBody),
     })
 
     // Get response as text first for debugging
     const responseText = await response.text()
+    logApiCall("fetchAccounts Response", requestBody, responseText)
     console.log("Accounts response text preview:", responseText.substring(0, 200) + "...")
 
     let data
@@ -117,6 +138,16 @@ export const fetchTransactionsMultiAccount = async (
       }
     }
 
+    // Log API request details for debugging
+    console.log(`API Request - fetchTransactionsMultiAccount:
+      entityId: ${entityId}
+      accountIds: ${accountIds.join(", ")}
+      startDate: ${startDate} (${typeof startDate})
+      endDate: ${endDate} (${typeof endDate})
+      page: ${page}
+      pageSize: ${pageSize}
+    `)
+
     // For first page, check cache
     if (page === 1) {
       const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
@@ -172,6 +203,9 @@ export const fetchTransactionsMultiAccount = async (
 
       console.log(`Fetching for account ${accountId}, ID type: ${typeof accountId}`)
 
+      // Log the request for debugging
+      logApiCall(`fetchTransactionsMultiAccount (account ${accountId})`, requestBody)
+
       try {
         const response = await fetchWithRetry(url, {
           method: "POST",
@@ -184,6 +218,7 @@ export const fetchTransactionsMultiAccount = async (
         })
 
         const responseText = await response.text()
+        logApiCall(`fetchTransactionsMultiAccount Response (account ${accountId})`, requestBody, responseText)
 
         let data
         try {
@@ -194,6 +229,14 @@ export const fetchTransactionsMultiAccount = async (
         }
 
         if (data.payload && Array.isArray(data.payload.transactions)) {
+          // Log transaction dates for debugging
+          if (data.payload.transactions.length > 0) {
+            const firstTx = data.payload.transactions[0]
+            const lastTx = data.payload.transactions[data.payload.transactions.length - 1]
+            console.log(`Account ${accountId} - First transaction date: ${firstTx.timestamp || firstTx.date}`)
+            console.log(`Account ${accountId} - Last transaction date: ${lastTx.timestamp || lastTx.date}`)
+          }
+
           // Add account_id and a unique ID to each transaction
           const accountTransactions = data.payload.transactions.map((transaction, index) => ({
             ...transaction,
@@ -225,6 +268,39 @@ export const fetchTransactionsMultiAccount = async (
       const dateB = new Date(b.timestamp || b.date || 0)
       return dateB.getTime() - dateA.getTime()
     })
+
+    // Filter transactions by date client-side since the API doesn't seem to respect the date range
+    console.log(`Filtering multi-account transactions by date range: ${startDate} to ${endDate}`)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+    if (dateRegex.test(startDate) && dateRegex.test(endDate)) {
+      const startDateObj = new Date(startDate)
+      const endDateObj = new Date(endDate)
+      startDateObj.setHours(0, 0, 0, 0)
+      endDateObj.setHours(23, 59, 59, 999)
+
+      const filteredTransactions = allTransactions.filter((tx) => {
+        const txDate = new Date(tx.timestamp || tx.date || 0)
+        return txDate >= startDateObj && txDate <= endDateObj
+      })
+
+      console.log(
+        `Filtered from ${allTransactions.length} to ${filteredTransactions.length} transactions based on date range`,
+      )
+
+      // Apply pagination to the filtered results
+      const paginatedTransactions = filteredTransactions.slice(0, pageSize)
+
+      // Cache the filtered results for first page
+      if (page === 1) {
+        await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, filteredTransactions)
+      }
+
+      return {
+        transactions: paginatedTransactions,
+        totalCount: filteredTransactions.length,
+        hasMore: filteredTransactions.length > pageSize,
+      }
+    }
 
     // Apply pagination to the combined results
     const paginatedTransactions = allTransactions.slice(0, pageSize)
@@ -289,6 +365,16 @@ export const fetchTransactions = async (
   hasMore: boolean
 }> => {
   try {
+    // Log API request details for debugging
+    console.log(`API Request - fetchTransactions:
+      entityId: ${entityId}
+      accountId: ${accountId}
+      startDate: ${startDate} (${typeof startDate})
+      endDate: ${endDate} (${typeof endDate})
+      page: ${page}
+      pageSize: ${pageSize}
+    `)
+
     // For first page, check cache
     if (page === 1) {
       const cachedData = await StorageService.getCachedTransactions(entityId, [accountId], startDate, endDate)
@@ -330,6 +416,9 @@ export const fetchTransactions = async (
 
     console.log("Request body:", JSON.stringify(requestBody))
 
+    // Log the request for debugging
+    logApiCall("fetchTransactions", requestBody)
+
     const response = await fetchWithRetry(url, {
       method: "POST",
       headers: {
@@ -342,6 +431,7 @@ export const fetchTransactions = async (
 
     // Get response as text first for debugging
     const responseText = await response.text()
+    logApiCall("fetchTransactions Response", requestBody, responseText)
     console.log("Response text preview:", responseText.substring(0, 200) + "...")
 
     let data
@@ -356,6 +446,14 @@ export const fetchTransactions = async (
       const totalCount = data.payload.total_count || data.payload.transactions.length
       const hasMore = data.payload.transactions.length >= pageSize
 
+      // Log transaction dates for debugging
+      if (data.payload.transactions.length > 0) {
+        const firstTx = data.payload.transactions[0]
+        const lastTx = data.payload.transactions[data.payload.transactions.length - 1]
+        console.log(`First transaction date: ${firstTx.timestamp || firstTx.date}`)
+        console.log(`Last transaction date: ${lastTx.timestamp || lastTx.date}`)
+      }
+
       // Add unique IDs to each transaction
       const transactions = data.payload.transactions.map((transaction, index) => ({
         ...transaction,
@@ -364,6 +462,39 @@ export const fetchTransactions = async (
           transaction.id ||
           `${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
       }))
+
+      // Filter transactions by date client-side since the API doesn't seem to respect the date range
+      console.log(`Filtering transactions by date range: ${startDate} to ${endDate}`)
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+      if (dateRegex.test(startDate) && dateRegex.test(endDate)) {
+        const startDateObj = new Date(startDate)
+        const endDateObj = new Date(endDate)
+        startDateObj.setHours(0, 0, 0, 0)
+        endDateObj.setHours(23, 59, 59, 999)
+
+        const filteredTransactions = transactions.filter((tx) => {
+          const txDate = new Date(tx.timestamp || tx.date || 0)
+          return txDate >= startDateObj && txDate <= endDateObj
+        })
+
+        console.log(
+          `Filtered from ${transactions.length} to ${filteredTransactions.length} transactions based on date range`,
+        )
+
+        // Cache the filtered results for first page
+        if (page === 1) {
+          await StorageService.cacheTransactions(entityId, [accountId], startDate, endDate, filteredTransactions)
+        }
+
+        // Adjust hasMore based on filtered results
+        const hasMoreFiltered = filteredTransactions.length >= pageSize
+
+        return {
+          transactions: filteredTransactions || [],
+          totalCount: filteredTransactions.length,
+          hasMore: hasMoreFiltered,
+        }
+      }
 
       // Cache the results for first page
       if (page === 1) {
@@ -467,7 +598,16 @@ async function fetchWithRetry(url: string, options: RequestInit, attempt = 1): P
  * Clear all cached data
  */
 export const clearAllCache = async (): Promise<void> => {
+  console.log("Clearing all cache data")
   await StorageService.clearAllCache()
+}
+
+/**
+ * Clear transactions cache only
+ */
+export const clearTransactionsCache = async (): Promise<void> => {
+  console.log("Clearing transactions cache data")
+  await StorageService.clearTransactionsCache()
 }
 
 /**

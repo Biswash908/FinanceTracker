@@ -11,10 +11,11 @@ import {
   ScrollView,
   SafeAreaView,
   Dimensions,
-  FlatList,
   RefreshControl,
   LogBox,
   Alert,
+  Animated,
+  type LayoutChangeEvent,
 } from "react-native"
 import { ENTITY_ID } from "@env"
 import { MaterialIcons } from "@expo/vector-icons"
@@ -25,9 +26,16 @@ import DateRangePicker from "../components/DateRangePicker"
 import FinancialSummary from "../components/FinancialSummary"
 import AccountSelector from "../components/AccountSelector"
 import TransactionFilters from "../components/TransactionFilters"
+import CustomScrollbar from "../components/CustomScrollbar"
 
 // Services and Utils
-import { fetchTransactions, fetchTransactionsMultiAccount, fetchAccounts, clearAllCache } from "../services/lean-api"
+import {
+  fetchTransactions,
+  fetchTransactionsMultiAccount,
+  fetchAccounts,
+  clearAllCache,
+  clearTransactionsCache,
+} from "../services/lean-api"
 import { categorizeTransaction, calculateFinancials } from "../utils/categorizer"
 import { StorageService } from "../services/storage-service"
 import { exportTransactionsToExcel } from "../utils/excel-export"
@@ -35,7 +43,7 @@ import { useTheme } from "../context/ThemeContext"
 import React from "react"
 
 // Import the date utility functions
-import { getFirstDayOfMonth, getCurrentDate } from "../utils/date-utils"
+import { formatDateToString, getFirstDayOfMonth, getCurrentDate } from "../utils/date-utils"
 
 // Suppress the warning about nested scrollviews
 LogBox.ignoreLogs(["VirtualizedLists should never be nested"])
@@ -45,17 +53,8 @@ const screenWidth = Dimensions.get("window").width
 
 // Constants
 const TRANSACTIONS_PER_PAGE = 50
-
-// Helper functions for date handling
-// const getCurrentDate = () => {
-//   const now = new Date()
-//   return now.toISOString().split("T")[0]
-// }
-
-// const getFirstDayOfMonth = () => {
-//   const now = new Date()
-//   return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0]
-// }
+// Increase this for multi-account fetches to load more transactions at once
+const MULTI_ACCOUNT_TRANSACTIONS_PER_PAGE = 100
 
 const TransactionsScreen = () => {
   const { isDarkMode } = useTheme()
@@ -72,7 +71,8 @@ const TransactionsScreen = () => {
   const [startDate, setStartDate] = useState(getFirstDayOfMonth())
   const [endDate, setEndDate] = useState(getCurrentDate())
   const [searchQuery, setSearchQuery] = useState("")
-  const [selectedCategory, setSelectedCategory] = useState("All")
+  // Update to use array for multiple category selection
+  const [selectedCategory, setSelectedCategory] = useState<string[]>(["All"])
   const [selectedType, setSelectedType] = useState("All")
   const [sortBy, setSortBy] = useState<"date" | "amount" | "category">("date")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
@@ -81,10 +81,23 @@ const TransactionsScreen = () => {
   const [totalCount, setTotalCount] = useState(0)
   const [isCacheClearing, setIsCacheClearing] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  // Add a flag to track if a load attempt failed
+  const [loadAttemptFailed, setLoadAttemptFailed] = useState(false)
+  // Add state for content height tracking
+  const [contentHeight, setContentHeight] = useState(0)
+  const [containerHeight, setContainerHeight] = useState(0)
+  const [flatListScrollEnabled, setFlatListScrollEnabled] = useState(true)
+  // Track loading state for each account
+  const [accountLoadingState, setAccountLoadingState] = useState<
+    Record<string, { page: number; hasMore: boolean; loading: boolean }>
+  >({})
+  const [scrollPosition, setScrollPosition] = useState(0)
+  const SCROLL_THRESHOLD = 200 // Show up button after scrolling this far
 
   // Refs
   const mainScrollViewRef = useRef(null)
   const transactionListRef = useRef(null)
+  const scrollY = useRef(new Animated.Value(0)).current
 
   // Filter transactions based on search query, category, type, and account
   const filteredTransactions = useMemo(() => {
@@ -92,6 +105,18 @@ const TransactionsScreen = () => {
       ? transactions.filter((transaction) => {
           // Skip invalid transactions
           if (!transaction || !transaction.description) return false
+
+          // Add date filtering
+          const txDate = new Date(transaction.timestamp || transaction.date || 0)
+          const startDateObj = new Date(startDate)
+          const endDateObj = new Date(endDate)
+          // Set time to beginning/end of day for proper comparison
+          startDateObj.setHours(0, 0, 0, 0)
+          endDateObj.setHours(23, 59, 59, 999)
+
+          // Check if transaction date is within the selected range
+          const isInDateRange = txDate >= startDateObj && txDate <= endDateObj
+          if (!isInDateRange) return false
 
           // Filter by search query
           const matchesQuery =
@@ -104,8 +129,10 @@ const TransactionsScreen = () => {
           const amount = transaction.amount ? Number.parseFloat(transaction.amount) : 0
           const isIncome = amount > 0
           const category = isIncome ? "income" : categorizeTransaction(transaction.description)
+
+          // Check if "All" is selected or if the transaction category is in the selected categories
           const matchesCategory =
-            selectedCategory === "All" || category.toLowerCase() === selectedCategory.toLowerCase()
+            selectedCategory.includes("All") || selectedCategory.some((c) => c.toLowerCase() === category.toLowerCase())
 
           // Filter by transaction type
           const matchesType =
@@ -116,7 +143,7 @@ const TransactionsScreen = () => {
           return matchesQuery && matchesCategory && matchesType
         })
       : []
-  }, [transactions, searchQuery, selectedCategory, selectedType])
+  }, [transactions, searchQuery, selectedCategory, selectedType, startDate, endDate])
 
   // Sort the filtered transactions
   const sortedTransactions = useMemo(() => {
@@ -127,8 +154,8 @@ const TransactionsScreen = () => {
         if (sortBy === "date") return new Date(tx.timestamp || tx.date || 0).getTime()
         if (sortBy === "amount") return Math.abs(Number(tx.amount || 0))
         if (sortBy === "category") {
-          const amount = Number(tx.amount || 0)
-          return amount > 0 ? "income" : categorizeTransaction(tx.description || "").toLowerCase()
+          // Change this to sort by description alphabetically instead of by category
+          return tx.description ? tx.description.toLowerCase() : ""
         }
         return 0
       }
@@ -159,22 +186,60 @@ const TransactionsScreen = () => {
   useEffect(() => {
     if (selectedAccounts.length > 0) {
       console.log(`Date range changed: ${startDate} to ${endDate}, reloading transactions...`)
+      // Reset the loadAttemptFailed flag when we're explicitly loading new data
+      setLoadAttemptFailed(false)
+
+      // Initialize account loading state
+      const initialLoadingState: Record<string, { page: number; hasMore: boolean; loading: boolean }> = {}
+      selectedAccounts.forEach((accountId) => {
+        initialLoadingState[accountId] = { page: 1, hasMore: true, loading: false }
+      })
+      setAccountLoadingState(initialLoadingState)
+
       loadTransactions(true)
     }
   }, [selectedAccounts, startDate, endDate])
 
   // Handle date range change
-  const handleDateRangeChange = useCallback((newStartDate, newEndDate) => {
-    console.log(`Date range changed: ${newStartDate} to ${newEndDate}`)
+  const handleDateRangeChange = useCallback(
+    (newStartDate, newEndDate) => {
+      console.log(`Date range changed: ${newStartDate} to ${newEndDate}`)
+      console.log(`Types: startDate=${typeof newStartDate}, endDate=${typeof newEndDate}`)
 
-    // Ensure we're working with string dates in YYYY-MM-DD format
-    const formattedStartDate =
-      typeof newStartDate === "string" ? newStartDate : newStartDate.toISOString().split("T")[0]
-    const formattedEndDate = typeof newEndDate === "string" ? newEndDate : newEndDate.toISOString().split("T")[0]
+      // Ensure we're working with string dates in YYYY-MM-DD format
+      let formattedStartDate = newStartDate
+      let formattedEndDate = newEndDate
 
-    setStartDate(formattedStartDate)
-    setEndDate(formattedEndDate)
-  }, [])
+      // If we received Date objects instead of strings, format them
+      if (newStartDate instanceof Date) {
+        formattedStartDate = formatDateToString(newStartDate)
+      }
+
+      if (newEndDate instanceof Date) {
+        formattedEndDate = formatDateToString(newEndDate)
+      }
+
+      console.log(`Formatted dates: ${formattedStartDate} to ${formattedEndDate}`)
+
+      // Validate that we have proper date strings in YYYY-MM-DD format
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+      if (!dateRegex.test(formattedStartDate) || !dateRegex.test(formattedEndDate)) {
+        console.error("Invalid date format. Expected YYYY-MM-DD")
+        return
+      }
+
+      // Force clear transactions cache when dates change
+      if (startDate !== formattedStartDate || endDate !== formattedEndDate) {
+        console.log("Date range changed, clearing transactions cache")
+        clearTransactionsCache().catch((err) => console.error("Error clearing transactions cache:", err))
+      }
+
+      setStartDate(formattedStartDate)
+      setEndDate(formattedEndDate)
+      // The useEffect will trigger a reload
+    },
+    [startDate, endDate],
+  )
 
   // Load accounts function
   const loadAccounts = async () => {
@@ -202,7 +267,79 @@ const TransactionsScreen = () => {
     }
   }
 
-  // Load transactions function
+  // New function to load transactions for a single account
+  const loadTransactionsForAccount = async (accountId: string, page: number, reset = false) => {
+    try {
+      console.log(`Loading transactions for account ${accountId}, page ${page}`)
+
+      // Update loading state for this account
+      setAccountLoadingState((prev) => ({
+        ...prev,
+        [accountId]: { ...prev[accountId], loading: true },
+      }))
+
+      const result = await fetchTransactions(ENTITY_ID, accountId, startDate, endDate, page, TRANSACTIONS_PER_PAGE)
+
+      // Ensure transactions is always an array
+      const newTransactions = result.transactions || []
+      console.log(`Received ${newTransactions.length} transactions for account ${accountId}`)
+
+      // Add account information to each transaction
+      const account = accounts.find((acc) => acc.id === accountId)
+      const enhancedTransactions = newTransactions.map((transaction) => ({
+        ...transaction,
+        account_name: account ? account.name : "Unknown Account",
+        account_type: account ? account.type : "Unknown",
+        // Ensure each transaction has a truly unique ID
+        id:
+          transaction.id ||
+          `${transaction.account_id}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+      }))
+
+      // Update transactions state
+      if (reset) {
+        // If resetting, replace all transactions for this account
+        setTransactions((prev) => {
+          // Filter out transactions from this account
+          const otherAccountTransactions = prev.filter((t) => t.account_id !== accountId)
+          return [...otherAccountTransactions, ...enhancedTransactions]
+        })
+      } else {
+        // If not resetting, append new transactions
+        setTransactions((prev) => {
+          // Filter out duplicates
+          const existingIds = new Set(prev.map((t) => t.id))
+          const uniqueNewTransactions = enhancedTransactions.filter((t) => !existingIds.has(t.id))
+          return [...prev, ...uniqueNewTransactions]
+        })
+      }
+
+      // Update account loading state
+      const hasMoreData = newTransactions.length === TRANSACTIONS_PER_PAGE && result.hasMore
+      setAccountLoadingState((prev) => ({
+        ...prev,
+        [accountId]: {
+          page: hasMoreData ? page + 1 : page,
+          hasMore: hasMoreData,
+          loading: false,
+        },
+      }))
+
+      return { success: true, hasMore: hasMoreData }
+    } catch (err) {
+      console.error(`Error loading transactions for account ${accountId}:`, err)
+
+      // Update account loading state on error
+      setAccountLoadingState((prev) => ({
+        ...prev,
+        [accountId]: { ...prev[accountId], loading: false, hasMore: false },
+      }))
+
+      return { success: false, hasMore: false }
+    }
+  }
+
+  // Load transactions function - modified to handle multiple accounts better
   const loadTransactions = async (reset = false) => {
     try {
       // If no accounts selected, don't try to load transactions
@@ -218,86 +355,68 @@ const TransactionsScreen = () => {
         setLoading(true)
         setCurrentPage(1)
         setTransactions([])
+        // Reset the loadAttemptFailed flag when explicitly resetting
+        setLoadAttemptFailed(false)
       }
 
       setError(null)
-      const page = reset ? 1 : currentPage
 
-      console.log(`Loading transactions for ${selectedAccounts.length} accounts: page ${page}`)
+      console.log(`Loading transactions for ${selectedAccounts.length} accounts`)
       console.log(`Date range: ${startDate} to ${endDate}`)
 
-      let result
+      // If only one account is selected, use the original approach
       if (selectedAccounts.length === 1) {
-        // Use single account fetch if only one account is selected
-        result = await fetchTransactions(
-          ENTITY_ID,
-          selectedAccounts[0],
-          startDate,
-          endDate,
-          page,
-          TRANSACTIONS_PER_PAGE,
-        )
+        const accountId = selectedAccounts[0]
+        const page = reset ? 1 : accountLoadingState[accountId]?.page || 1
+
+        await loadTransactionsForAccount(accountId, page, reset)
       } else {
-        // Use multi-account fetch if multiple accounts are selected
-        result = await fetchTransactionsMultiAccount(
-          ENTITY_ID,
-          selectedAccounts,
-          startDate,
-          endDate,
-          page,
-          TRANSACTIONS_PER_PAGE,
-        )
-      }
+        // For multiple accounts, we have two options:
 
-      // Ensure transactions is always an array
-      const newTransactions = result.transactions || []
-      console.log(`Received ${newTransactions.length} transactions`)
+        // Option 1: Use the multi-account fetch API (but it might be limited to 50 transactions)
+        if (false) {
+          // Disabled in favor of Option 2
+          const page = reset ? 1 : currentPage
+          const result = await fetchTransactionsMultiAccount(
+            ENTITY_ID,
+            selectedAccounts,
+            startDate,
+            endDate,
+            page,
+            MULTI_ACCOUNT_TRANSACTIONS_PER_PAGE,
+          )
 
-      // Add account information to each transaction
-      const enhancedTransactions = newTransactions.map((transaction) => {
-        const account = accounts.find((acc) => acc.id === transaction.account_id)
-        return {
-          ...transaction,
-          account_name: account ? account.name : "Unknown Account",
-          account_type: account ? account.type : "Unknown",
-          // Ensure each transaction has a truly unique ID
-          id:
-            transaction.id ||
-            `${transaction.account_id}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+          // Process results similar to the original code...
         }
-      })
+        // Option 2: Fetch each account separately and combine the results
+        else {
+          // If resetting, clear all transactions first
+          if (reset) {
+            setTransactions([])
+          }
 
-      // Update state with new data
-      if (reset) {
-        setTransactions(enhancedTransactions)
-      } else {
-        // Ensure no duplicate transactions when appending
-        const existingIds = new Set(transactions.map((t) => t.id))
-        const uniqueNewTransactions = enhancedTransactions.filter((t) => !existingIds.has(t.id))
+          // Load first page of transactions for each account in parallel
+          const loadPromises = selectedAccounts.map((accountId) => {
+            const page = reset ? 1 : accountLoadingState[accountId]?.page || 1
+            return loadTransactionsForAccount(accountId, page, false)
+          })
 
-        console.log(`Adding ${uniqueNewTransactions.length} unique new transactions to existing ${transactions.length}`)
-
-        setTransactions((prev) => [...prev, ...uniqueNewTransactions])
+          await Promise.all(loadPromises)
+        }
       }
 
-      setTotalCount(result.totalCount)
+      // Check if any account has more transactions to load
+      const anyAccountHasMore = Object.values(accountLoadingState).some((state) => state.hasMore)
+      setHasMore(anyAccountHasMore)
 
-      // Only set hasMore to false if we received fewer transactions than requested
-      const hasMoreData = newTransactions.length >= TRANSACTIONS_PER_PAGE
-      console.log(
-        `Has more data: ${hasMoreData ? "Yes" : "No"} (received ${newTransactions.length} of ${TRANSACTIONS_PER_PAGE})`,
-      )
-      setHasMore(hasMoreData)
-
-      // If we loaded data and there's more, increment the page
-      if (hasMoreData) {
-        const nextPage = page + 1
-        console.log(`Setting next page to: ${nextPage}`)
-        setCurrentPage(nextPage)
-      }
+      // Update total count (approximate)
+      setTotalCount(transactions.length)
     } catch (err) {
       console.error("Error loading transactions:", err)
       setError(err.message)
+      // Mark as failed attempt on error
+      setLoadAttemptFailed(true)
+      setHasMore(false)
     } finally {
       setLoading(false)
       setRefreshing(false)
@@ -308,19 +427,42 @@ const TransactionsScreen = () => {
   // Handle pull-to-refresh
   const onRefresh = useCallback(() => {
     setRefreshing(true)
+    // Reset the loadAttemptFailed flag when user explicitly refreshes
+    setLoadAttemptFailed(false)
     loadTransactions(true)
   }, [selectedAccounts, startDate, endDate])
 
-  // Handle load more
+  // Handle load more - modified to load more for each account that has more transactions
   const handleLoadMore = useCallback(() => {
-    if (!loadingMore && hasMore) {
+    // Only load more if:
+    // 1. We're not already loading
+    // 2. There's potentially more data
+    // 3. We haven't had a failed load attempt
+    if (!loadingMore && hasMore && !loadAttemptFailed) {
       console.log("Loading more transactions...")
       setLoadingMore(true)
-      loadTransactions(false)
+
+      // For single account, use the original approach
+      if (selectedAccounts.length === 1) {
+        loadTransactions(false)
+      } else {
+        // For multiple accounts, load more for each account that has more transactions
+        const loadMorePromises = selectedAccounts
+          .filter((accountId) => accountLoadingState[accountId]?.hasMore && !accountLoadingState[accountId]?.loading)
+          .map((accountId) => {
+            return loadTransactionsForAccount(accountId, accountLoadingState[accountId].page, false)
+          })
+
+        Promise.all(loadMorePromises).finally(() => {
+          setLoadingMore(false)
+        })
+      }
     } else {
-      console.log(`Not loading more: loadingMore=${loadingMore}, hasMore=${hasMore}`)
+      console.log(
+        `Not loading more: loadingMore=${loadingMore}, hasMore=${hasMore}, loadAttemptFailed=${loadAttemptFailed}`,
+      )
     }
-  }, [loadingMore, hasMore, currentPage, selectedAccounts, startDate, endDate])
+  }, [loadingMore, hasMore, loadAttemptFailed, selectedAccounts, accountLoadingState])
 
   // Handle account selection change
   const handleAccountsChange = useCallback((accountIds) => {
@@ -337,6 +479,8 @@ const TransactionsScreen = () => {
       Alert.alert("Success", "Cache cleared successfully")
       // Reload data
       await loadAccounts()
+      // Reset the loadAttemptFailed flag when clearing cache
+      setLoadAttemptFailed(false)
       await loadTransactions(true)
     } catch (error) {
       console.error("Error clearing cache:", error)
@@ -403,6 +547,42 @@ const TransactionsScreen = () => {
     )
   }, [])
 
+  // Handle content size change
+  const handleContentSizeChange = (w: number, h: number) => {
+    setContentHeight(h)
+  }
+
+  // Handle layout change
+  const handleLayout = (event: LayoutChangeEvent) => {
+    setContainerHeight(event.nativeEvent.layout.height)
+  }
+
+  // Add a function to scroll to top
+  const scrollToTop = () => {
+    if (transactionListRef.current) {
+      transactionListRef.current.scrollToOffset({ offset: 0, animated: true })
+    }
+  }
+
+  // Add a function to scroll to bottom
+  const scrollToBottom = () => {
+    if (transactionListRef.current && contentHeight > 0) {
+      transactionListRef.current.scrollToOffset({
+        offset: contentHeight - containerHeight,
+        animated: true,
+      })
+    }
+  }
+
+  // Safe fallback for scrollbar rendering
+  const showCustomScrollbar = contentHeight > containerHeight && containerHeight > 0
+
+  // Handle transaction box layout
+  const handleTransactionBoxLayout = (event: LayoutChangeEvent) => {
+    const { height, width } = event.nativeEvent.layout
+    console.log("Transaction Box Layout: ", { height, width })
+  }
+
   return (
     <SafeAreaView style={[styles.safeArea, isDarkMode && { backgroundColor: "#121212" }]}>
       <ScrollView
@@ -411,7 +591,15 @@ const TransactionsScreen = () => {
         contentContainerStyle={styles.contentContainer}
         showsVerticalScrollIndicator={true}
         nestedScrollEnabled={true}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={["#3498db"]} />}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={["#3498db"]}
+            progressViewOffset={10}
+            tintColor={isDarkMode ? "#3498db" : "#3498db"}
+          />
+        }
       >
         {/* Header */}
         <View style={styles.header}>
@@ -531,7 +719,10 @@ const TransactionsScreen = () => {
         </View>
 
         {/* Transaction Box */}
-        <View style={[styles.transactionBox, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
+        <View
+          style={[styles.transactionBox, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}
+          onLayout={handleTransactionBoxLayout}
+        >
           {loading && !refreshing && !loadingMore ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#3498db" />
@@ -550,43 +741,90 @@ const TransactionsScreen = () => {
               </Text>
             </View>
           ) : (
-            <FlatList
-              ref={transactionListRef}
-              data={sortedTransactions}
-              keyExtractor={(item) => item?.id || `transaction-${Math.random().toString(36).substring(2, 15)}`}
-              renderItem={renderTransactionItem}
-              contentContainerStyle={styles.transactionListContent}
-              nestedScrollEnabled={true}
-              initialNumToRender={10}
-              maxToRenderPerBatch={10}
-              windowSize={5}
-              removeClippedSubviews={true}
-              onEndReached={handleLoadMore}
-              onEndReachedThreshold={0.5}
-              updateCellsBatchingPeriod={50}
-              getItemLayout={(data, index) => ({
-                length: 100, // Approximate height of each transaction card
-                offset: 100 * index,
-                index,
-              })}
-              ListFooterComponent={
-                loadingMore ? (
-                  <View style={styles.loadingMoreContainer}>
-                    <ActivityIndicator size="small" color="#3498db" />
-                    <Text style={[styles.loadingMoreText, isDarkMode && { color: "#AAA" }]}>Loading more...</Text>
-                  </View>
-                ) : hasMore ? (
-                  <TouchableOpacity
-                    style={[styles.loadMoreButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-                    onPress={handleLoadMore}
-                  >
-                    <Text style={styles.loadMoreButtonText}>Load More Transactions</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <Text style={[styles.endOfListText, isDarkMode && { color: "#AAA" }]}>End of transactions</Text>
-                )
-              }
-            />
+            <View style={styles.flatListContainer} onLayout={handleLayout}>
+              <Animated.FlatList
+                ref={transactionListRef}
+                data={sortedTransactions}
+                keyExtractor={(item) => item?.id || `transaction-${Math.random().toString(36).substring(2, 15)}`}
+                renderItem={renderTransactionItem}
+                contentContainerStyle={styles.transactionListContent}
+                nestedScrollEnabled={true}
+                scrollEnabled={flatListScrollEnabled}
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={5}
+                removeClippedSubviews={true}
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
+                updateCellsBatchingPeriod={50}
+                showsVerticalScrollIndicator={false}
+                onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+                  useNativeDriver: false,
+                  listener: (event) => {
+                    const offsetY = event.nativeEvent.contentOffset.y
+                    setScrollPosition(offsetY)
+                    console.log(
+                      `Scroll position: ${offsetY}, Content height: ${contentHeight}, Container height: ${containerHeight}`,
+                    )
+                  },
+                })}
+                scrollEventThrottle={16}
+                onContentSizeChange={handleContentSizeChange}
+                getItemLayout={(data, index) => ({
+                  length: 100, // Approximate height of each transaction card
+                  offset: 100 * index,
+                  index,
+                })}
+                ListFooterComponent={
+                  loadingMore ? (
+                    <View style={styles.loadingMoreContainer}>
+                      <ActivityIndicator size="small" color="#3498db" />
+                      <Text style={[styles.loadingMoreText, isDarkMode && { color: "#AAA" }]}>Loading more...</Text>
+                    </View>
+                  ) : hasMore && !loadAttemptFailed ? (
+                    <TouchableOpacity
+                      style={[styles.loadMoreButton, isDarkMode && { backgroundColor: "#2C5282" }]}
+                      onPress={handleLoadMore}
+                    >
+                      <Text style={styles.loadMoreButtonText}>Load More Transactions</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text style={[styles.endOfListText, isDarkMode && { color: "#AAA" }]}>
+                      {loadAttemptFailed ? "Pull down to refresh for more transactions" : "End of transactions"}
+                    </Text>
+                  )
+                }
+              />
+
+              {/* Custom Scrollbar - only show if content is taller than container */}
+              {showCustomScrollbar && (
+                <CustomScrollbar
+                  scrollViewRef={transactionListRef}
+                  contentHeight={contentHeight}
+                  containerHeight={containerHeight}
+                  scrollY={scrollY}
+                  isDarkMode={isDarkMode}
+                  setScrollEnabled={setFlatListScrollEnabled}
+                />
+              )}
+
+              {/* Scroll buttons */}
+              {contentHeight > containerHeight && (
+                <>
+                  {scrollPosition > SCROLL_THRESHOLD && (
+                    <TouchableOpacity style={styles.scrollToTopButton} onPress={scrollToTop}>
+                      <MaterialIcons name="arrow-upward" size={24} color="#FFF" />
+                    </TouchableOpacity>
+                  )}
+                  {/* Hide scroll down button when at the bottom */}
+                  {scrollPosition + containerHeight < contentHeight - 20 && (
+                    <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
+                      <MaterialIcons name="arrow-downward" size={24} color="#FFF" />
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+            </View>
           )}
         </View>
 
@@ -718,7 +956,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   transactionBox: {
-    height: screenHeight * 0.45, // Increased from 0.4 to 0.45
+    height: screenHeight * 0.75,
     backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
@@ -729,6 +967,10 @@ const styles = StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: "#eee",
+  },
+  flatListContainer: {
+    flex: 1,
+    position: "relative",
   },
   transactionListContent: {
     padding: 8,
@@ -802,6 +1044,38 @@ const styles = StyleSheet.create({
     textAlign: "center",
     padding: 16,
     color: "#666",
+  },
+  scrollToTopButton: {
+    position: "absolute",
+    bottom: 74, // Position above the down button
+    right: 20,
+    backgroundColor: "#3498db",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  scrollToBottomButton: {
+    position: "absolute",
+    bottom: 20,
+    right: 20,
+    backgroundColor: "#3498db",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
   },
 })
 

@@ -1,19 +1,47 @@
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
-// Keys for AsyncStorage
-const KEYS = {
-  TRANSACTIONS: "transactions",
-  ACCOUNTS: "accounts",
-  LAST_SYNC: "lastSync",
-  TRANSACTION_CACHE: "transactionCache",
-}
+// Storage keys
+const ACCOUNTS_CACHE_KEY = "accounts_cache"
+const TRANSACTIONS_CACHE_PREFIX = "transactions_cache_"
+const CACHE_EXPIRY_KEY = "cache_expiry"
 
-/**
- * Storage service for caching transactions and other data
- */
+// Cache expiry time in milliseconds (default: 24 hours)
+const DEFAULT_CACHE_EXPIRY = 24 * 60 * 60 * 1000
+
 export class StorageService {
   /**
-   * Save transactions to AsyncStorage with a specific cache key based on parameters
+   * Save accounts data to cache
+   */
+  static async saveAccounts(accounts: any[]): Promise<void> {
+    try {
+      const cacheData = {
+        accounts,
+        timestamp: Date.now(),
+      }
+      await AsyncStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(cacheData))
+    } catch (error) {
+      console.error("Error saving accounts to cache:", error)
+    }
+  }
+
+  /**
+   * Get cached accounts data
+   */
+  static async getCachedAccounts(): Promise<{ accounts: any[]; timestamp: number } | null> {
+    try {
+      const cachedData = await AsyncStorage.getItem(ACCOUNTS_CACHE_KEY)
+      if (cachedData) {
+        return JSON.parse(cachedData)
+      }
+      return null
+    } catch (error) {
+      console.error("Error getting cached accounts:", error)
+      return null
+    }
+  }
+
+  /**
+   * Cache transactions data
    */
   static async cacheTransactions(
     entityId: string,
@@ -23,29 +51,22 @@ export class StorageService {
     transactions: any[],
   ): Promise<void> {
     try {
-      // Create a cache key based on the query parameters
-      const cacheKey = this.generateCacheKey(entityId, accountIds, startDate, endDate)
+      // Create a unique key based on the parameters
+      const cacheKey = this.getTransactionsCacheKey(entityId, accountIds, startDate, endDate)
 
-      // Store the transactions with metadata
       const cacheData = {
         transactions,
         timestamp: Date.now(),
-        params: { entityId, accountIds, startDate, endDate },
       }
 
-      await AsyncStorage.setItem(`${KEYS.TRANSACTION_CACHE}:${cacheKey}`, JSON.stringify(cacheData))
-
-      console.log(`Cached ${transactions.length} transactions with key: ${cacheKey}`)
-
-      // Update the list of cache keys for management
-      await this.updateCacheKeysList(cacheKey)
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(cacheData))
     } catch (error) {
       console.error("Error caching transactions:", error)
     }
   }
 
   /**
-   * Get cached transactions if available
+   * Get cached transactions data
    */
   static async getCachedTransactions(
     entityId: string,
@@ -54,72 +75,40 @@ export class StorageService {
     endDate: string,
   ): Promise<{ transactions: any[]; timestamp: number } | null> {
     try {
-      const cacheKey = this.generateCacheKey(entityId, accountIds, startDate, endDate)
-      const cachedData = await AsyncStorage.getItem(`${KEYS.TRANSACTION_CACHE}:${cacheKey}`)
+      // Create a unique key based on the parameters
+      const cacheKey = this.getTransactionsCacheKey(entityId, accountIds, startDate, endDate)
 
+      const cachedData = await AsyncStorage.getItem(cacheKey)
       if (cachedData) {
-        const data = JSON.parse(cachedData)
-        console.log(`Retrieved ${data.transactions.length} cached transactions from key: ${cacheKey}`)
-        return {
-          transactions: data.transactions,
-          timestamp: data.timestamp,
-        }
+        return JSON.parse(cachedData)
       }
-
       return null
     } catch (error) {
-      console.error("Error retrieving cached transactions:", error)
+      console.error("Error getting cached transactions:", error)
       return null
     }
   }
 
   /**
-   * Check if cache is valid (not expired)
+   * Generate a unique cache key for transactions
    */
-  static isCacheValid(timestamp: number, maxAgeMs = 3600000): boolean {
-    // Default: 1 hour
-    return Date.now() - timestamp < maxAgeMs
+  private static getTransactionsCacheKey(
+    entityId: string,
+    accountIds: string[],
+    startDate: string,
+    endDate: string,
+  ): string {
+    // Sort account IDs to ensure consistent key regardless of order
+    const sortedAccountIds = [...accountIds].sort().join("_")
+    return `${TRANSACTIONS_CACHE_PREFIX}${entityId}_${sortedAccountIds}_${startDate}_${endDate}`
   }
 
   /**
-   * Save accounts to AsyncStorage
+   * Check if cache is still valid based on timestamp
    */
-  static async saveAccounts(accounts: any[]): Promise<void> {
-    try {
-      await AsyncStorage.setItem(
-        KEYS.ACCOUNTS,
-        JSON.stringify({
-          accounts,
-          timestamp: Date.now(),
-        }),
-      )
-      console.log(`Saved ${accounts.length} accounts to storage`)
-    } catch (error) {
-      console.error("Error saving accounts:", error)
-    }
-  }
-
-  /**
-   * Get cached accounts if available
-   */
-  static async getCachedAccounts(): Promise<{ accounts: any[]; timestamp: number } | null> {
-    try {
-      const cachedData = await AsyncStorage.getItem(KEYS.ACCOUNTS)
-
-      if (cachedData) {
-        const data = JSON.parse(cachedData)
-        console.log(`Retrieved ${data.accounts.length} cached accounts`)
-        return {
-          accounts: data.accounts,
-          timestamp: data.timestamp,
-        }
-      }
-
-      return null
-    } catch (error) {
-      console.error("Error retrieving cached accounts:", error)
-      return null
-    }
+  static isCacheValid(timestamp: number, maxAge: number = DEFAULT_CACHE_EXPIRY): boolean {
+    const now = Date.now()
+    return now - timestamp < maxAge
   }
 
   /**
@@ -127,94 +116,77 @@ export class StorageService {
    */
   static async clearAllCache(): Promise<void> {
     try {
-      // Get all cache keys
-      const allKeys = await AsyncStorage.getAllKeys()
-      const cacheKeys = allKeys.filter((key) => key.startsWith(KEYS.TRANSACTION_CACHE))
+      // Get all keys
+      const keys = await AsyncStorage.getAllKeys()
 
-      // Remove all cache items
+      // Filter cache keys
+      const cacheKeys = keys.filter(
+        (key) => key === ACCOUNTS_CACHE_KEY || key.startsWith(TRANSACTIONS_CACHE_PREFIX) || key === CACHE_EXPIRY_KEY,
+      )
+
+      // Remove all cache keys
       if (cacheKeys.length > 0) {
         await AsyncStorage.multiRemove(cacheKeys)
+        console.log(`Cleared ${cacheKeys.length} cache items`)
       }
-
-      // Clear the cache keys list
-      await AsyncStorage.removeItem("cacheKeysList")
-
-      console.log(`Cleared ${cacheKeys.length} cache items`)
     } catch (error) {
       console.error("Error clearing cache:", error)
+      throw error
     }
   }
 
   /**
-   * Clear old cache entries (older than maxAgeMs)
+   * Clear only transactions cache
    */
-  static async clearOldCache(maxAgeMs = 86400000): Promise<void> {
-    // Default: 24 hours
+  static async clearTransactionsCache(): Promise<void> {
     try {
-      // Get the list of cache keys
-      const cacheKeysListStr = await AsyncStorage.getItem("cacheKeysList")
-      if (!cacheKeysListStr) return
+      // Get all keys
+      const keys = await AsyncStorage.getAllKeys()
 
-      const cacheKeysList = JSON.parse(cacheKeysListStr)
+      // Filter transaction cache keys
+      const transactionCacheKeys = keys.filter((key) => key.startsWith(TRANSACTIONS_CACHE_PREFIX))
+
+      // Remove transaction cache keys
+      if (transactionCacheKeys.length > 0) {
+        await AsyncStorage.multiRemove(transactionCacheKeys)
+        console.log(`Cleared ${transactionCacheKeys.length} transaction cache items`)
+      }
+    } catch (error) {
+      console.error("Error clearing transactions cache:", error)
+      throw error
+    }
+  }
+
+  /**
+   * Clear old cached data (older than the expiry time)
+   */
+  static async clearOldCache(): Promise<void> {
+    try {
+      // Get all keys
+      const keys = await AsyncStorage.getAllKeys()
+
+      // Filter cache keys
+      const cacheKeys = keys.filter((key) => key === ACCOUNTS_CACHE_KEY || key.startsWith(TRANSACTIONS_CACHE_PREFIX))
+
+      // Check each cache item
       const keysToRemove = []
-      const currentTime = Date.now()
-
-      // Check each cache entry
-      for (const cacheKey of cacheKeysList) {
-        const cacheItemKey = `${KEYS.TRANSACTION_CACHE}:${cacheKey}`
-        const cachedData = await AsyncStorage.getItem(cacheItemKey)
-
+      for (const key of cacheKeys) {
+        const cachedData = await AsyncStorage.getItem(key)
         if (cachedData) {
           const data = JSON.parse(cachedData)
-          if (currentTime - data.timestamp > maxAgeMs) {
-            keysToRemove.push(cacheItemKey)
+          if (!this.isCacheValid(data.timestamp)) {
+            keysToRemove.push(key)
           }
-        } else {
-          // If the item doesn't exist, add it to removal list
-          keysToRemove.push(cacheItemKey)
         }
       }
 
-      // Remove old cache entries
+      // Remove expired cache keys
       if (keysToRemove.length > 0) {
         await AsyncStorage.multiRemove(keysToRemove)
-        console.log(`Removed ${keysToRemove.length} old cache entries`)
-
-        // Update the cache keys list
-        const updatedKeysList = cacheKeysList.filter(
-          (key) => !keysToRemove.includes(`${KEYS.TRANSACTION_CACHE}:${key}`),
-        )
-        await AsyncStorage.setItem("cacheKeysList", JSON.stringify(updatedKeysList))
+        console.log(`Cleared ${keysToRemove.length} expired cache items`)
       }
     } catch (error) {
       console.error("Error clearing old cache:", error)
-    }
-  }
-
-  /**
-   * Generate a cache key based on query parameters
-   */
-  private static generateCacheKey(entityId: string, accountIds: string[], startDate: string, endDate: string): string {
-    // Sort account IDs to ensure consistent keys regardless of order
-    const sortedAccountIds = [...accountIds].sort()
-    return `${entityId}_${sortedAccountIds.join("-")}_${startDate}_${endDate}`
-  }
-
-  /**
-   * Update the list of cache keys for management
-   */
-  private static async updateCacheKeysList(newKey: string): Promise<void> {
-    try {
-      const cacheKeysListStr = await AsyncStorage.getItem("cacheKeysList")
-      const cacheKeysList = cacheKeysListStr ? JSON.parse(cacheKeysListStr) : []
-
-      // Add the new key if it doesn't exist
-      if (!cacheKeysList.includes(newKey)) {
-        cacheKeysList.push(newKey)
-        await AsyncStorage.setItem("cacheKeysList", JSON.stringify(cacheKeysList))
-      }
-    } catch (error) {
-      console.error("Error updating cache keys list:", error)
     }
   }
 }

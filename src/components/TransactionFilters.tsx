@@ -7,9 +7,10 @@ import { useTheme } from "../context/ThemeContext"
 import CategoryBadge from "./CategoryBadge"
 import { MaterialIcons } from "@expo/vector-icons"
 
+// Update the interface to use string[] for selectedCategory
 interface TransactionFiltersProps {
-  selectedCategory: string
-  setSelectedCategory: (category: string) => void
+  selectedCategory: string[]
+  setSelectedCategory: (category: string[]) => void
   selectedType: string
   setSelectedType: (type: string) => void
   sortOption: string
@@ -18,6 +19,7 @@ interface TransactionFiltersProps {
   setSortDirection: (direction: "asc" | "desc") => void
 }
 
+// Update the component to handle multiple category selection
 const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   selectedCategory,
   setSelectedCategory,
@@ -54,11 +56,44 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   const sortOptions = [
     { id: "date", label: "Date" },
     { id: "amount", label: "Amount" },
+    { id: "category", label: "Category" },
   ]
 
   // Toggle sort direction
   const toggleSortDirection = () => {
     setSortDirection(sortDirection === "asc" ? "desc" : "asc")
+  }
+
+  // Handle category selection
+  const handleCategoryPress = (category: string) => {
+    if (category === "All") {
+      // If "All" is selected, clear all other selections
+      setSelectedCategory(["All"])
+    } else {
+      // If any other category is selected
+      const newSelectedCategories = [...selectedCategory]
+
+      // If it's already selected, remove it
+      if (newSelectedCategories.includes(category)) {
+        const filteredCategories = newSelectedCategories.filter((c) => c !== category)
+        // If removing the last category, select "All"
+        if (filteredCategories.length === 0 || (filteredCategories.length === 1 && filteredCategories[0] === "All")) {
+          setSelectedCategory(["All"])
+        } else {
+          // Remove "All" if it's in the list and we're selecting specific categories
+          setSelectedCategory(filteredCategories.filter((c) => c !== "All"))
+        }
+      } else {
+        // If it's not selected, add it and remove "All" if present
+        const withoutAll = newSelectedCategories.filter((c) => c !== "All")
+        setSelectedCategory([...withoutAll, category])
+      }
+    }
+  }
+
+  // Check if a category is selected
+  const isCategorySelected = (category: string) => {
+    return selectedCategory.includes(category)
   }
 
   return (
@@ -95,6 +130,9 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
       {/* Category Filter */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, isDarkMode && { color: "#DDD" }]}>Category</Text>
+        <Text style={[styles.categoryHint, isDarkMode && { color: "#AAA" }]}>
+          Tap multiple categories to filter by more than one
+        </Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -105,8 +143,8 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
             <CategoryBadge
               key={category}
               category={category}
-              isSelected={selectedCategory === category}
-              onPress={() => setSelectedCategory(category)}
+              isSelected={isCategorySelected(category)}
+              onPress={() => handleCategoryPress(category)}
             />
           ))}
         </ScrollView>
@@ -183,6 +221,12 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#333",
     marginBottom: 12,
+  },
+  categoryHint: {
+    fontSize: 12,
+    color: "#666",
+    marginBottom: 8,
+    fontStyle: "italic",
   },
   typeFilters: {
     flexDirection: "row",
