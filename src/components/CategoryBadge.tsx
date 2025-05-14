@@ -27,6 +27,7 @@ const CategoryBadge: React.FC<CategoryBadgeProps> = ({ category, isSelected, onP
       charity: "❤️",
       housing: "🏠",
       income: "💰",
+      pending: "⏳",
       other: "📋",
     }
 
@@ -46,6 +47,7 @@ const CategoryBadge: React.FC<CategoryBadgeProps> = ({ category, isSelected, onP
       entertainment: "#FF3333", // Red
       charity: "#33FF33", // Bright green
       income: "#27ae60", // Green
+      pending: "#f39c12", // Orange
       other: "#AAAAAA", // Gray
       all: "#3498db", // Blue
     }

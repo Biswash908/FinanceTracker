@@ -9,10 +9,11 @@ import { useTheme } from "../context/ThemeContext"
 interface TransactionCardProps {
   transaction: any
   category: string
+  isPending?: boolean
   onPress: () => void
 }
 
-const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category, onPress }) => {
+const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category, isPending = false, onPress }) => {
   const { isDarkMode } = useTheme()
 
   // Handle potentially invalid transaction data
@@ -60,15 +61,24 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
     <TouchableOpacity
       style={[
         styles.container,
-        isIncome ? styles.incomeItem : styles.expenseItem,
-        isDarkMode && { backgroundColor: "#2A2A2A", borderLeftColor: isIncome ? "#27ae60" : "#e74c3c" },
+        isPending ? styles.pendingItem : (isIncome ? styles.incomeItem : styles.expenseItem),
+        isDarkMode && { 
+          backgroundColor: "#2A2A2A", 
+          borderLeftColor: isPending ? "#f39c12" : (isIncome ? "#27ae60" : "#e74c3c") 
+        },
       ]}
       onPress={onPress}
     >
       <View style={styles.header}>
         <Text style={[styles.date, isDarkMode && { color: "#AAA" }]}>{formatDate(date)}</Text>
-        <Text style={[styles.amount, isIncome ? styles.incomeText : styles.expenseText]}>
+        <Text 
+          style={[
+            styles.amount, 
+            isPending ? styles.pendingText : (isIncome ? styles.incomeText : styles.expenseText)
+          ]}
+        >
           {isIncome ? "+" : "-"} {formatCurrency(amount, currency)}
+          {/* Removed the (Pending) text here as requested */}
         </Text>
       </View>
 
@@ -76,15 +86,22 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
 
       <View style={styles.footer}>
         <View style={styles.leftFooter}>
-          <Text style={[styles.category, isDarkMode && { backgroundColor: "#444", color: "#CCC" }]}>
+          <Text 
+            style={[
+              styles.category, 
+              isDarkMode && { backgroundColor: "#444", color: "#CCC" }
+            ]}
+          >
             {getCategoryEmoji(category)} {category}
           </Text>
           <Text style={[styles.accountName, isDarkMode && { backgroundColor: "#333", color: "#AAA" }]}>
             {accountName}
           </Text>
         </View>
-        {transaction.status && (
-          <Text style={[styles.status, isDarkMode && { color: "#AAA" }]}>{transaction.status}</Text>
+        {isPending && (
+          <View style={[styles.pendingBadge, isDarkMode && { backgroundColor: "#5d4037" }]}>
+            <Text style={styles.pendingBadgeText}>PENDING</Text>
+          </View>
         )}
       </View>
     </TouchableOpacity>
@@ -111,6 +128,10 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: "#e74c3c",
   },
+  pendingItem: {
+    borderLeftWidth: 4,
+    borderLeftColor: "#f39c12", // Orange for pending
+  },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -130,6 +151,9 @@ const styles = StyleSheet.create({
   expenseText: {
     color: "#e74c3c",
   },
+  pendingText: {
+    color: "#f39c12", // Orange for pending
+  },
   description: {
     fontSize: 14,
     color: "#333",
@@ -143,6 +167,7 @@ const styles = StyleSheet.create({
   leftFooter: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
   },
   category: {
     fontSize: 12,
@@ -161,9 +186,17 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 10,
   },
-  status: {
-    fontSize: 12,
-    color: "#666",
+  pendingBadge: {
+    backgroundColor: "#fff3e0",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 4,
+  },
+  pendingBadgeText: {
+    color: "#e65100",
+    fontSize: 10,
+    fontWeight: "bold",
   },
 })
 

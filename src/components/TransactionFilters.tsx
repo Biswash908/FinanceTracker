@@ -50,7 +50,7 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   ]
 
   // Transaction types
-  const transactionTypes = ["All", "Income", "Expense"]
+  const transactionTypes = ["All", "Income", "Expense", "Pending"]
 
   // Sort options
   const sortOptions = [

@@ -1,7 +1,17 @@
 /**
- * Categorize a transaction based on its description
+ * Categorize a transaction based on its description and pending status
  */
-export const categorizeTransaction = (description: string): string => {
+export const categorizeTransaction = (description: string, isPending?: boolean): string => {
+  // Check for pending status first - this overrides any other category
+  if (isPending === true) {
+    return "pending"
+  }
+
+  // If no description is provided, consider it uncategorized
+  if (!description || description.trim() === "") {
+    return "other"
+  }
+
   description = description.toLowerCase()
 
   // Define category keywords
@@ -28,12 +38,14 @@ export const categorizeTransaction = (description: string): string => {
   return "other"
 }
 
-// Update the calculateFinancials function to be more robust with undefined data
+// Update the calculateFinancials function to handle pending transactions
+// Update the calculateFinancials function to handle pending transactions
 export const calculateFinancials = (transactions) => {
   console.log(`Calculating financials for ${transactions?.length || 0} transactions`)
 
   let income = 0
   let expenses = 0
+  let pendingAmount = 0
   const categoryTotals = {}
 
   // Check if transactions is an array before using forEach
@@ -42,8 +54,22 @@ export const calculateFinancials = (transactions) => {
       if (!transaction) return // Skip null or undefined transactions
 
       const amount = Number.parseFloat(transaction.amount || 0)
+      const isPending = transaction.pending === true
 
-      if (amount > 0) {
+      if (isPending) {
+        // Track pending transactions separately
+        pendingAmount += Math.abs(amount)
+        
+        // Also categorize pending transactions by their actual category
+        const category = amount > 0 ? "income" : categorizeTransaction(transaction.description || "", false)
+        
+        // Add to category totals with a "pending_" prefix to track separately if needed
+        const pendingCategoryKey = `pending_${category}`
+        categoryTotals[pendingCategoryKey] = (categoryTotals[pendingCategoryKey] || 0) + Math.abs(amount)
+        
+        // Also add to the regular category for total calculations
+        categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
+      } else if (amount > 0) {
         income += amount
         // Add to income category
         categoryTotals["income"] = (categoryTotals["income"] || 0) + amount
@@ -51,7 +77,7 @@ export const calculateFinancials = (transactions) => {
         expenses += Math.abs(amount)
 
         // Categorize and add to category totals
-        const category = categorizeTransaction(transaction.description || "")
+        const category = categorizeTransaction(transaction.description || "", false)
         categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
       }
     })
@@ -61,12 +87,13 @@ export const calculateFinancials = (transactions) => {
 
   const balance = income - expenses
 
-  console.log(`Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}`)
+  console.log(`Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}`)
 
   return {
     income,
     expenses,
     balance,
+    pendingAmount,
     categoryTotals,
   }
 }

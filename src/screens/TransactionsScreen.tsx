@@ -51,7 +51,8 @@ LogBox.ignoreLogs(["VirtualizedLists should never be nested"])
 const screenHeight = Dimensions.get("window").height
 const screenWidth = Dimensions.get("window").width
 
-// Constants
+const REQUEST_DELAY = 300 // Milliseconds to wait between requests
+const MAX_CONCURRENT_REQUESTS = 1 // Maximum number of concurrent requests per account
 // 1. Increase the TRANSACTIONS_PER_PAGE constant to ensure we get all transactions
 // Using a smaller page size but making sure we load all pages
 const TRANSACTIONS_PER_PAGE = 50
@@ -93,6 +94,7 @@ const TransactionsScreen = () => {
   const [contentHeight, setContentHeight] = useState(0)
   const [containerHeight, setContainerHeight] = useState(0)
   const [flatListScrollEnabled, setFlatListScrollEnabled] = useState(true)
+  const [activeRequests, setActiveRequests] = useState<Record<string, boolean>>({})
   // Track loading state for each account
   const [accountLoadingState, setAccountLoadingState] = useState<
     Record<
@@ -122,49 +124,53 @@ const TransactionsScreen = () => {
 
   // Filter transactions based on search query, category, type, and account
   const filteredTransactions = useMemo(() => {
-    return Array.isArray(transactions)
-      ? transactions.filter((transaction) => {
-          // Skip invalid transactions
-          if (!transaction) return false
+  return Array.isArray(transactions)
+    ? transactions.filter((transaction) => {
+        // Skip invalid transactions
+        if (!transaction) return false
 
-          // Add date filtering
-          const txDate = new Date(transaction.timestamp || transaction.date || 0)
-          const startDateObj = new Date(startDate)
-          const endDateObj = new Date(endDate)
-          // Set time to beginning/end of day for proper comparison
-          startDateObj.setHours(0, 0, 0, 0)
-          endDateObj.setHours(23, 59, 59, 999)
+        // Add date filtering
+        const txDate = new Date(transaction.timestamp || transaction.date || 0)
+        const startDateObj = new Date(startDate)
+        const endDateObj = new Date(endDate)
+        // Set time to beginning/end of day for proper comparison
+        startDateObj.setHours(0, 0, 0, 0)
+        endDateObj.setHours(23, 59, 59, 999)
 
-          // Check if transaction date is within the selected range
-          const isInDateRange = txDate >= startDateObj && txDate <= endDateObj
-          if (!isInDateRange) return false
+        // Check if transaction date is within the selected range
+        const isInDateRange = txDate >= startDateObj && txDate <= endDateObj
+        if (!isInDateRange) return false
 
-          // Filter by search query
-          const matchesQuery =
-            searchQuery === "" ||
-            transaction.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (transaction.amount && transaction.amount.toString().includes(searchQuery.toLowerCase())) ||
-            (transaction.account_name && transaction.account_name.toLowerCase().includes(searchQuery.toLowerCase()))
+        // Filter by search query
+        const matchesQuery =
+          searchQuery === "" ||
+          transaction.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (transaction.amount && transaction.amount.toString().includes(searchQuery.toLowerCase())) ||
+          (transaction.account_name && transaction.account_name.toLowerCase().includes(searchQuery.toLowerCase()))
 
-          // Filter by category
-          const amount = transaction.amount ? Number.parseFloat(transaction.amount) : 0
-          const isIncome = amount > 0
-          const category = isIncome ? "income" : categorizeTransaction(transaction.description)
+        // Check for pending status
+        const isPending = transaction.pending === true
+        
+        // Filter by category - use the actual category regardless of pending status
+        const amount = transaction.amount ? Number.parseFloat(transaction.amount) : 0
+        const isIncome = amount > 0
+        const category = isIncome ? "income" : categorizeTransaction(transaction.description, false)
 
-          // Check if "All" is selected or if the transaction category is in the selected categories
-          const matchesCategory =
-            selectedCategory.includes("All") || selectedCategory.some((c) => c.toLowerCase() === category.toLowerCase())
+        // Check if "All" is selected or if the transaction category is in the selected categories
+        const matchesCategory =
+          selectedCategory.includes("All") || selectedCategory.some((c) => c.toLowerCase() === category.toLowerCase())
 
-          // Filter by transaction type
-          const matchesType =
-            selectedType === "All" ||
-            (selectedType === "Income" && isIncome) ||
-            (selectedType === "Expense" && !isIncome)
+        // Filter by transaction type - now including pending as a separate type
+        const matchesType =
+          selectedType === "All" ||
+          (selectedType === "Income" && isIncome && !isPending) ||
+          (selectedType === "Expense" && !isIncome && !isPending) ||
+          (selectedType === "Pending" && isPending)
 
-          return matchesQuery && matchesCategory && matchesType
-        })
-      : []
-  }, [transactions, searchQuery, selectedCategory, selectedType, startDate, endDate])
+        return matchesQuery && matchesCategory && matchesType
+      })
+    : []
+}, [transactions, searchQuery, selectedCategory, selectedType, startDate, endDate])
 
   // Sort the filtered transactions
   const sortedTransactions = useMemo(() => {
@@ -364,130 +370,164 @@ const TransactionsScreen = () => {
 
   // Improved function to load transactions for a single account
   const loadTransactionsForAccount = async (accountId: string, page: number, reset = false) => {
-    // Declare emptyResponseCount and currentLoadedCount
-    const emptyResponseCount = 0
-    const currentLoadedCount = 0
+  // Check if there's already an active request for this account
+  if (activeRequests[accountId]) {
+    console.log(`Skipping request for account ${accountId} - request already in progress`)
+    return { success: false, hasMore: true, skipped: true }
+  }
 
-    try {
-      console.log(`Loading transactions for account ${accountId}, page ${page}`)
+  // Declare emptyResponseCount and currentLoadedCount
+  const emptyResponseCount = 0
+  const currentLoadedCount = 0
 
-      // Update loading state for this account
-      setAccountLoadingState((prev) => ({
-        ...prev,
-        [accountId]: {
-          ...prev[accountId],
-          loading: true,
-          retryCount: prev[accountId]?.retryCount || 0,
-        },
-      }))
+  try {
+    console.log(`Loading transactions for account ${accountId}, page ${page}`)
 
-      const result = await fetchTransactions(ENTITY_ID, accountId, startDate, endDate, page, TRANSACTIONS_PER_PAGE)
+    // Mark this account as having an active request
+    setActiveRequests(prev => ({
+      ...prev,
+      [accountId]: true
+    }))
 
-      // Ensure transactions is always an array
-      const newTransactions = result.transactions || []
-      console.log(`Received ${newTransactions.length} transactions for account ${accountId}, page ${page}`)
+    // Update loading state for this account
+    setAccountLoadingState((prev) => ({
+      ...prev,
+      [accountId]: {
+        ...prev[accountId],
+        loading: true,
+        retryCount: prev[accountId]?.retryCount || 0,
+      },
+    }))
 
-      // If this is the first page and we have a total count, store it
-      let expectedTotal = 0
-      if (page === 1 && result.total) {
-        expectedTotal = result.total
-        console.log(`Expected total transactions for account ${accountId}: ${expectedTotal}`)
-      } else {
-        // Use the previously stored expected total
-        expectedTotal = accountLoadingState[accountId]?.expectedTotal || 0
-      }
+    // Add a small delay before making the request to avoid rate limiting
+    await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY))
 
-      // Add account information to each transaction
-      const account = accounts.find((acc) => acc.id === accountId)
-      const enhancedTransactions = newTransactions.map((transaction) => ({
-        ...transaction,
-        account_name: account ? account.name : "Unknown Account",
-        account_type: account ? account.type : "Unknown",
-        // Ensure each transaction has a truly unique ID
-        id:
-          transaction.id ||
-          `${transaction.account_id}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
-      }))
+    const result = await fetchTransactions(ENTITY_ID, accountId, startDate, endDate, page, TRANSACTIONS_PER_PAGE)
 
-      // Update transactions state
-      if (reset) {
-        // If resetting, replace all transactions for this account
-        setTransactions((prev) => {
-          // Filter out transactions from this account
-          const otherAccountTransactions = prev.filter((t) => t.account_id !== accountId)
-          return [...otherAccountTransactions, ...enhancedTransactions]
-        })
-      } else {
-        // If not resetting, append new transactions
-        setTransactions((prev) => {
-          // Filter out duplicates
-          const existingIds = new Set(prev.map((t) => t.id))
-          const uniqueNewTransactions = enhancedTransactions.filter((t) => !existingIds.has(t.id))
-          return [...prev, ...uniqueNewTransactions]
-        })
-      }
+    // Ensure transactions is always an array
+    const newTransactions = result.transactions || []
+    console.log(`Received ${newTransactions.length} transactions for account ${accountId}, page ${page}`)
+
+    // If this is the first page and we have a total count, store it
+    let expectedTotal = 0
+    if (page === 1 && result.total) {
+      expectedTotal = result.total
+      console.log(`Expected total transactions for account ${accountId}: ${expectedTotal}`)
+    } else {
+      // Use the previously stored expected total
+      expectedTotal = accountLoadingState[accountId]?.expectedTotal || 0
+    }
+
+    // Add account information to each transaction
+    const account = accounts.find((acc) => acc.id === accountId)
+    const enhancedTransactions = newTransactions.map((transaction) => ({
+      ...transaction,
+      account_name: account ? account.name : "Unknown Account",
+      account_type: account ? account.type : "Unknown",
+      // Ensure each transaction has a truly unique ID
+      id:
+        transaction.id ||
+        `${transaction.account_id}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+    }))
+
+    // Update transactions state
+    if (reset) {
+      // If resetting, replace all transactions for this account
+      setTransactions((prev) => {
+        // Filter out transactions from this account
+        const otherAccountTransactions = prev.filter((t) => t.account_id !== accountId)
+        return [...otherAccountTransactions, ...enhancedTransactions]
+      })
+    } else {
+      // If not resetting, append new transactions
+      setTransactions((prev) => {
+        // Filter out duplicates
+        const existingIds = new Set(prev.map((t) => t.id))
+        const uniqueNewTransactions = enhancedTransactions.filter((t) => !existingIds.has(t.id))
+        return [...prev, ...uniqueNewTransactions]
+      })
+    }
 
       // Update account loading state
       // Consider there might be more transactions even if we received fewer than the page size
       // This ensures we keep trying to load more until we get an empty response
       const hasMoreData =
-        newTransactions.length > 0 && (newTransactions.length === TRANSACTIONS_PER_PAGE || result.hasMore)
-      setAccountLoadingState((prev) => ({
-        ...prev,
-        [accountId]: {
-          page: hasMoreData ? page + 1 : page,
-          hasMore: hasMoreData,
-          loading: false,
-          emptyResponseCount,
-          retryCount: 0, // Reset retry count on success
-          expectedTotal,
-          loadedCount: currentLoadedCount,
-        },
-      }))
+      newTransactions.length > 0 && (newTransactions.length === TRANSACTIONS_PER_PAGE || result.hasMore)
+    setAccountLoadingState((prev) => ({
+      ...prev,
+      [accountId]: {
+        page: hasMoreData ? page + 1 : page,
+        hasMore: hasMoreData,
+        loading: false,
+        emptyResponseCount,
+        retryCount: 0, // Reset retry count on success
+        expectedTotal,
+        loadedCount: currentLoadedCount,
+      },
+    }))
 
-      // If we have more data and haven't reached the expected total, load the next page immediately
-      if (hasMoreData && (expectedTotal === 0 || currentLoadedCount < expectedTotal) && newTransactions.length > 0) {
-        console.log(
-          `Continuing to load more for account ${accountId}, current: ${currentLoadedCount}, expected: ${expectedTotal}`,
-        )
-        // Small delay to prevent overwhelming the API
-        setTimeout(() => {
-          loadTransactionsForAccount(accountId, page + 1, false)
-        }, 100)
-      }
+    // If we have more data and haven't reached the expected total, load the next page after a delay
+    if (hasMoreData && (expectedTotal === 0 || currentLoadedCount < expectedTotal) && newTransactions.length > 0) {
+      console.log(
+        `Continuing to load more for account ${accountId}, current: ${currentLoadedCount}, expected: ${expectedTotal}`,
+      )
+      // Increased delay to prevent overwhelming the API
+      setTimeout(() => {
+        loadTransactionsForAccount(accountId, page + 1, false)
+      }, REQUEST_DELAY * 2)
+    }
 
-      return { success: true, hasMore: hasMoreData }
-    } catch (err) {
-      console.error(`Error loading transactions for account ${accountId}:`, err)
+    return { success: true, hasMore: hasMoreData }
+  } catch (err) {
+    console.error(`Error loading transactions for account ${accountId}:`, err)
+    
+    // Check for duplicate request error
+    const isDuplicateRequestError = 
+      err?.message?.includes("DUPLICATED_REQUEST") || 
+      (typeof err === 'object' && err?.status === "DUPLICATED_REQUEST")
+    
+    // Increment retry count
+    const retryCount = (accountLoadingState[accountId]?.retryCount || 0) + 1
 
-      // Increment retry count
-      const retryCount = (accountLoadingState[accountId]?.retryCount || 0) + 1
+    // Determine if we should retry - always retry for duplicate request errors with increasing delay
+    const shouldRetry = retryCount < MAX_LOAD_RETRIES || isDuplicateRequestError
 
-      // Determine if we should retry
-      const shouldRetry = retryCount < MAX_LOAD_RETRIES
+    // Calculate retry delay - use exponential backoff for duplicate request errors
+    const retryDelay = isDuplicateRequestError 
+      ? Math.min(1000 * Math.pow(2, retryCount), 10000) // Exponential backoff with max 10 seconds
+      : 1000 * retryCount
 
-      // Update account loading state on error
-      setAccountLoadingState((prev) => ({
-        ...prev,
-        [accountId]: {
-          ...prev[accountId],
-          loading: false,
-          hasMore: shouldRetry, // Only mark as having more if we're going to retry
-          retryCount,
-        },
-      }))
+    // Update account loading state on error
+    setAccountLoadingState((prev) => ({
+      ...prev,
+      [accountId]: {
+        ...prev[accountId],
+        loading: false,
+        hasMore: shouldRetry, // Only mark as having more if we're going to retry
+        retryCount,
+      },
+    }))
 
       // Retry after a delay if we haven't exceeded the retry limit
-      if (shouldRetry) {
-        console.log(`Retrying load for account ${accountId}, attempt ${retryCount}`)
-        setTimeout(() => {
-          loadTransactionsForAccount(accountId, page, false)
-        }, 1000 * retryCount) // Increasing backoff
-      }
-
-      return { success: false, hasMore: shouldRetry }
+     if (shouldRetry) {
+      console.log(`Retrying load for account ${accountId}, attempt ${retryCount} in ${retryDelay}ms`)
+      setTimeout(() => {
+        loadTransactionsForAccount(accountId, page, false)
+      }, retryDelay)
     }
+
+    return { success: false, hasMore: shouldRetry }
+  } finally {
+    // Mark this account as no longer having an active request
+    // Use a small delay to prevent immediate re-requests
+    setTimeout(() => {
+      setActiveRequests(prev => ({
+        ...prev,
+        [accountId]: false
+      }))
+    }, REQUEST_DELAY)
   }
+}
 
   // Load transactions function - modified to handle multiple accounts better
   const loadTransactions = async (reset = false) => {
@@ -527,37 +567,18 @@ const TransactionsScreen = () => {
 
         await loadTransactionsForAccount(accountId, page, reset)
       } else {
-        // For multiple accounts, we have two options:
-
-        // Option 1: Use the multi-account fetch API (but it might be limited to 50 transactions)
-        if (false) {
-          // Disabled in favor of Option 2
-          const page = reset ? 1 : currentPage
-          const result = await fetchTransactionsMultiAccount(
-            ENTITY_ID,
-            selectedAccounts,
-            startDate,
-            endDate,
-            page,
-            MULTI_ACCOUNT_TRANSACTIONS_PER_PAGE,
-          )
-
-          // Process results similar to the original code...
+        // For multiple accounts, we'll load them sequentially to avoid duplicate request errors
+        // If resetting, clear all transactions first
+        if (reset) {
+          setTransactions([])
         }
-        // Option 2: Fetch each account separately and combine the results
-        else {
-          // If resetting, clear all transactions first
-          if (reset) {
-            setTransactions([])
-          }
 
-          // Load first page of transactions for each account in parallel
-          const loadPromises = selectedAccounts.map((accountId) => {
-            const page = reset ? 1 : accountLoadingState[accountId]?.page || 1
-            return loadTransactionsForAccount(accountId, page, false)
-          })
-
-          await Promise.all(loadPromises)
+        // Load first page of transactions for each account sequentially
+        for (const accountId of selectedAccounts) {
+          const page = reset ? 1 : accountLoadingState[accountId]?.page || 1
+          await loadTransactionsForAccount(accountId, page, false)
+          // Add a delay between accounts to avoid overwhelming the API
+          await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY * 2))
         }
       }
 
@@ -595,35 +616,38 @@ const TransactionsScreen = () => {
 
   // Handle load more - modified to load more for each account that has more transactions
   const handleLoadMore = useCallback(() => {
-    // Only load more if:
-    // 1. We're not already loading
-    // 2. There's potentially more data
-    // 3. We haven't had a failed load attempt
-    if (!loadingMore && hasMore && !loadAttemptFailed) {
-      console.log("Loading more transactions...")
-      setLoadingMore(true)
+  // Only load more if:
+  // 1. We're not already loading
+  // 2. There's potentially more data
+  // 3. We haven't had a failed load attempt
+  if (!loadingMore && hasMore && !loadAttemptFailed) {
+    console.log("Loading more transactions...")
+    setLoadingMore(true)
 
-      // For single account, use the original approach
-      if (selectedAccounts.length === 1) {
-        loadTransactions(false)
-      } else {
-        // For multiple accounts, load more for each account that has more transactions
-        const loadMorePromises = selectedAccounts
-          .filter((accountId) => accountLoadingState[accountId]?.hasMore && !accountLoadingState[accountId]?.loading)
-          .map((accountId) => {
-            return loadTransactionsForAccount(accountId, accountLoadingState[accountId].page, false)
-          })
-
-        Promise.all(loadMorePromises).finally(() => {
-          setLoadingMore(false)
-        })
-      }
+    // For single account, use the original approach
+    if (selectedAccounts.length === 1) {
+      loadTransactions(false)
     } else {
-      console.log(
-        `Not loading more: loadingMore=${loadingMore}, hasMore=${hasMore}, loadAttemptFailed=${loadAttemptFailed}`,
-      )
+      // For multiple accounts, load more sequentially for each account that has more transactions
+      (async () => {
+        const accountsToLoad = selectedAccounts
+          .filter((accountId) => accountLoadingState[accountId]?.hasMore && !accountLoadingState[accountId]?.loading && !activeRequests[accountId])
+        
+        for (const accountId of accountsToLoad) {
+          await loadTransactionsForAccount(accountId, accountLoadingState[accountId].page, false)
+          // Add a delay between accounts to avoid overwhelming the API
+          await new Promise(resolve => setTimeout(resolve, REQUEST_DELAY * 2))
+        }
+        
+        setLoadingMore(false)
+      })()
     }
-  }, [loadingMore, hasMore, loadAttemptFailed, selectedAccounts, accountLoadingState])
+  } else {
+    console.log(
+      `Not loading more: loadingMore=${loadingMore}, hasMore=${hasMore}, loadAttemptFailed=${loadAttemptFailed}`,
+    )
+  }
+}, [loadingMore, hasMore, loadAttemptFailed, selectedAccounts, accountLoadingState, activeRequests])
 
   // Handle account selection change
   const handleAccountsChange = useCallback((accountIds) => {
@@ -691,22 +715,27 @@ const TransactionsScreen = () => {
 
   // Replace the renderTransactionItem function with this optimized version
   const renderTransactionItem = useCallback(({ item }) => {
-    if (!item) {
-      console.warn("Invalid transaction item:", item)
-      return null
-    }
+  if (!item) {
+    console.warn("Invalid transaction item:", item)
+    return null
+  }
 
-    const amount = item.amount ? Number.parseFloat(item.amount) : 0
-    const category = amount > 0 ? "income" : categorizeTransaction(item.description)
+  const amount = item.amount ? Number.parseFloat(item.amount) : 0
+  // Check for pending status
+  const isPending = item.pending === true
+  
+  // Determine the category based on amount and description, regardless of pending status
+  const category = amount > 0 ? "income" : categorizeTransaction(item.description, false)
 
-    return (
-      <MemoizedTransactionCard
-        transaction={item}
-        category={category}
-        onPress={() => console.log("Transaction pressed:", item.id)}
-      />
-    )
-  }, [])
+  return (
+    <MemoizedTransactionCard
+      transaction={item}
+      category={category}
+      isPending={isPending}
+      onPress={() => console.log("Transaction pressed:", item.id)}
+    />
+  )
+}, [])
 
   // Handle content size change
   const handleContentSizeChange = (w: number, h: number) => {
@@ -895,6 +924,7 @@ const TransactionsScreen = () => {
           expenses={financialSummary.expenses}
           balance={financialSummary.balance}
           categoryTotals={financialSummary.categoryTotals}
+          pendingAmount={financialSummary.pendingAmount}
         />
 
         {/* Error */}
@@ -1199,7 +1229,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   transactionBox: {
-    height: screenHeight * 0.55,
+    height: screenHeight * 0.75,
     backgroundColor: "#fff",
     borderRadius: 12,
     overflow: "hidden",
