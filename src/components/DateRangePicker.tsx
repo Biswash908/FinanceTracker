@@ -1,9 +1,10 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, Platform } from "react-native"
 import DateTimePicker from "@react-native-community/datetimepicker"
+import { useTheme } from "../context/ThemeContext"
 
 interface DateRangePickerProps {
   startDate: string
@@ -12,16 +13,35 @@ interface DateRangePickerProps {
 }
 
 const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, onDateRangeChange }) => {
+  const { isDarkMode } = useTheme()
   const [showStartDatePicker, setShowStartDatePicker] = useState(false)
   const [showEndDatePicker, setShowEndDatePicker] = useState(false)
   const [localStartDate, setLocalStartDate] = useState(new Date(startDate))
   const [localEndDate, setLocalEndDate] = useState(new Date(endDate))
 
-  // Update local dates when props change
+  // Add a ref to track if the date was changed by a preset button
+  const isPresetSelection = useRef(false)
+  // Add a ref to track the last manual selection
+  const lastManualSelection = useRef({ start: startDate, end: endDate })
+  // Add a ref to track if we're currently in the middle of a date update
+  const isUpdatingDates = useRef(false)
+
+  // Update local dates when props change, but only if it wasn't triggered by this component
   useEffect(() => {
     try {
-      setLocalStartDate(new Date(startDate))
-      setLocalEndDate(new Date(endDate))
+      // Skip if we're in the middle of updating dates to avoid loops
+      if (isUpdatingDates.current) {
+        isUpdatingDates.current = false
+        return
+      }
+
+      // Only update if the dates have changed from external sources
+      if (startDate !== formatDateToString(localStartDate) || endDate !== formatDateToString(localEndDate)) {
+        console.log(`DateRangePicker: External date change detected: ${startDate} to ${endDate}`)
+        setLocalStartDate(new Date(startDate))
+        setLocalEndDate(new Date(endDate))
+        lastManualSelection.current = { start: startDate, end: endDate }
+      }
     } catch (error) {
       console.error("Error updating local dates:", error)
     }
@@ -63,23 +83,29 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
     setShowStartDatePicker(Platform.OS === "ios")
 
     if (selectedDate) {
+      // Set flag to indicate we're updating dates
+      isUpdatingDates.current = true
+
       setLocalStartDate(selectedDate)
-      // Format date as YYYY-MM-DD string
-      const year = selectedDate.getFullYear()
-      const month = String(selectedDate.getMonth() + 1).padStart(2, "0")
-      const day = String(selectedDate.getDate()).padStart(2, "0")
-      const formattedDate = `${year}-${month}-${day}`
+      const formattedDate = formatDateToString(selectedDate)
 
-      console.log("New start date selected:", formattedDate, "Type:", typeof formattedDate)
-
-      // Ensure end date is not before start date
       const endDateObj = new Date(endDate)
       if (selectedDate > endDateObj) {
-        const newEndDate = formattedDate // Use same format for consistency
-        console.log("Adjusting end date to match start date:", newEndDate)
-        setLocalEndDate(selectedDate) // Update local end date
+        // If selected start date is after current end date, update end date too
+        const newEndDate = formattedDate
+        setLocalEndDate(selectedDate)
+        lastManualSelection.current = {
+          start: formattedDate,
+          end: newEndDate,
+        }
+        console.log(`DatePicker: Manual date change: ${formattedDate} to ${newEndDate} (start > end)`)
         onDateRangeChange(formattedDate, newEndDate)
       } else {
+        lastManualSelection.current = {
+          start: formattedDate,
+          end: endDate,
+        }
+        console.log(`DatePicker: Manual date change: ${formattedDate} to ${endDate} (start date only)`)
         onDateRangeChange(formattedDate, endDate)
       }
     }
@@ -89,23 +115,29 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
     setShowEndDatePicker(Platform.OS === "ios")
 
     if (selectedDate) {
+      // Set flag to indicate we're updating dates
+      isUpdatingDates.current = true
+
       setLocalEndDate(selectedDate)
-      // Format date as YYYY-MM-DD string
-      const year = selectedDate.getFullYear()
-      const month = String(selectedDate.getMonth() + 1).padStart(2, "0")
-      const day = String(selectedDate.getDate()).padStart(2, "0")
-      const formattedDate = `${year}-${month}-${day}`
+      const formattedDate = formatDateToString(selectedDate)
 
-      console.log("New end date selected:", formattedDate, "Type:", typeof formattedDate)
-
-      // Ensure start date is not after end date
       const startDateObj = new Date(startDate)
       if (selectedDate < startDateObj) {
-        const newStartDate = formattedDate // Use same format for consistency
-        console.log("Adjusting start date to match end date:", newStartDate)
-        setLocalStartDate(selectedDate) // Update local start date
+        // If selected end date is before current start date, update start date too
+        const newStartDate = formattedDate
+        setLocalStartDate(selectedDate)
+        lastManualSelection.current = {
+          start: newStartDate,
+          end: formattedDate,
+        }
+        console.log(`DatePicker: Manual date change: ${newStartDate} to ${formattedDate} (end < start)`)
         onDateRangeChange(newStartDate, formattedDate)
       } else {
+        lastManualSelection.current = {
+          start: startDate,
+          end: formattedDate,
+        }
+        console.log(`DatePicker: Manual date change: ${startDate} to ${formattedDate} (end date only)`)
         onDateRangeChange(startDate, formattedDate)
       }
     }
@@ -185,25 +217,34 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
   ]
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Date Range</Text>
+        <Text style={[styles.title, isDarkMode && { color: "#DDD" }]}>Date Range</Text>
         <View style={styles.quickFilters}>
           {dateRanges.map((range, index) => (
             <TouchableOpacity
               key={`range-${index}`}
-              style={styles.quickFilterButton}
+              style={[styles.quickFilterButton, isDarkMode && { backgroundColor: "#333" }]}
               onPress={() => {
                 try {
+                  // Set flag to indicate we're updating dates
+                  isUpdatingDates.current = true
+
                   const { start, end } = range.getRange()
                   console.log(`Quick filter: ${range.label}, ${start} to ${end}`)
+
+                  // Update local dates
+                  setLocalStartDate(new Date(start))
+                  setLocalEndDate(new Date(end))
+
+                  // Call the parent callback
                   onDateRangeChange(start, end)
                 } catch (error) {
                   console.error(`Error applying ${range.label} filter:`, error)
                 }
               }}
             >
-              <Text style={styles.quickFilterText}>{range.label}</Text>
+              <Text style={[styles.quickFilterText, isDarkMode && { color: "#DDD" }]}>{range.label}</Text>
             </TouchableOpacity>
           ))}
         </View>
@@ -211,16 +252,26 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
 
       <View style={styles.dateContainer}>
         <View style={styles.dateRow}>
-          <Text style={styles.dateLabel}>From:</Text>
-          <TouchableOpacity style={styles.dateButton} onPress={() => setShowStartDatePicker(true)}>
-            <Text style={styles.dateButtonText}>{formatDateForDisplay(startDate)}</Text>
+          <Text style={[styles.dateLabel, isDarkMode && { color: "#AAA" }]}>From:</Text>
+          <TouchableOpacity
+            style={[styles.dateButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+            onPress={() => setShowStartDatePicker(true)}
+          >
+            <Text style={[styles.dateButtonText, isDarkMode && { color: "#FFF" }]}>
+              {formatDateForDisplay(formatDateToString(localStartDate))}
+            </Text>
           </TouchableOpacity>
         </View>
 
         <View style={styles.dateRow}>
-          <Text style={styles.dateLabel}>To:</Text>
-          <TouchableOpacity style={styles.dateButton} onPress={() => setShowEndDatePicker(true)}>
-            <Text style={styles.dateButtonText}>{formatDateForDisplay(endDate)}</Text>
+          <Text style={[styles.dateLabel, isDarkMode && { color: "#AAA" }]}>To:</Text>
+          <TouchableOpacity
+            style={[styles.dateButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+            onPress={() => setShowEndDatePicker(true)}
+          >
+            <Text style={[styles.dateButtonText, isDarkMode && { color: "#FFF" }]}>
+              {formatDateForDisplay(formatDateToString(localEndDate))}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -242,7 +293,7 @@ const DateRangePicker: React.FC<DateRangePickerProps> = ({ startDate, endDate, o
           mode="date"
           display={Platform.OS === "ios" ? "spinner" : "default"}
           onChange={onChangeEndDate}
-          minimumDate={new Date(startDate)}
+          minimumDate={localStartDate}
           maximumDate={new Date()}
         />
       )}
@@ -261,6 +312,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
   },
   header: {
     marginBottom: 16,

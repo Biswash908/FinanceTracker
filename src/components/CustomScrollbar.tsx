@@ -1,5 +1,8 @@
-import React, { useRef, useState, useEffect } from "react"
-import { View, StyleSheet, TouchableOpacity, PanResponder, Animated } from "react-native"
+"use client"
+
+import type React from "react"
+import { useRef, useState, useEffect } from "react"
+import { View, StyleSheet, PanResponder, Animated } from "react-native"
 
 interface CustomScrollbarProps {
   scrollViewRef: React.RefObject<any>
@@ -7,7 +10,7 @@ interface CustomScrollbarProps {
   containerHeight: number
   scrollY: Animated.Value
   isDarkMode: boolean
-  setScrollEnabled: (enabled: boolean) => void
+  setScrollEnabled?: (enabled: boolean) => void
 }
 
 const CustomScrollbar = ({
@@ -18,111 +21,135 @@ const CustomScrollbar = ({
   isDarkMode,
   setScrollEnabled,
 }: CustomScrollbarProps) => {
-  // Calculate the scrollbar height based on the ratio of container to content
-  const scrollRatio = containerHeight / contentHeight
-  const scrollbarHeight = Math.max(containerHeight * scrollRatio, 40) // Minimum height of 40
-  
-  // Calculate the maximum scroll position
-  const maxScrollPosition = contentHeight - containerHeight
+  // Calculate scrollbar height based on content and container ratio
+  const scrollbarHeight = Math.max(
+    30, // Minimum scrollbar height
+    (containerHeight / contentHeight) * containerHeight,
+  )
+
+  // Calculate the maximum scrollbar position
   const maxScrollbarPosition = containerHeight - scrollbarHeight
-  
-  // State for tracking drag
-  const [isDragging, setIsDragging] = useState(false)
+
+  // State to track scrollbar position
   const [scrollbarPosition, setScrollbarPosition] = useState(0)
-  
-  // Animated value for scrollbar position
-  const scrollbarY = useRef(new Animated.Value(0)).current
-  
-  // Update scrollbar position when scrollY changes
+
+  // State to track if we're currently dragging
+  const [isDragging, setIsDragging] = useState(false)
+
+  // Reference to store the starting position for dragging
+  const startDragY = useRef(0)
+  const startScrollbarPos = useRef(0)
+  const lastScrollPosition = useRef(0)
+
+  // Update scrollbar position based on scroll position when not dragging
   useEffect(() => {
-    const scrollListener = scrollY.addListener(({ value }) => {
-      // Only update if not currently dragging
+    const listener = scrollY.addListener(({ value }) => {
+      // Store the last scroll position
+      lastScrollPosition.current = value
+
       if (!isDragging) {
-        // Calculate scrollbar position based on scroll position
-        const newPosition = (value / maxScrollPosition) * maxScrollbarPosition
-        // Ensure position is within bounds
+        // Calculate the position of the scrollbar based on scroll position
+        const maxScroll = Math.max(1, contentHeight - containerHeight)
+        const newPosition = (value / maxScroll) * maxScrollbarPosition
+
+        // Ensure scrollbar position stays within bounds
         const boundedPosition = Math.max(0, Math.min(newPosition, maxScrollbarPosition))
-        // Update scrollbar position
-        scrollbarY.setValue(boundedPosition)
         setScrollbarPosition(boundedPosition)
       }
     })
-    
+
     return () => {
-      scrollY.removeListener(scrollListener)
+      scrollY.removeListener(listener)
     }
-  }, [scrollY, maxScrollPosition, maxScrollbarPosition, isDragging])
-  
-  // Create pan responder for handling drag gestures
+  }, [scrollY, contentHeight, containerHeight, maxScrollbarPosition, isDragging])
+
+  // Create pan responder for dragging the scrollbar
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
+      onPanResponderGrant: (evt) => {
+        // Start dragging
         setIsDragging(true)
-        setScrollEnabled(false)
-        scrollbarY.setOffset(scrollbarPosition)
-        scrollbarY.setValue(0)
+        if (setScrollEnabled) setScrollEnabled(false)
+
+        // Store the starting touch position and current scrollbar position
+        startDragY.current = evt.nativeEvent.pageY
+        startScrollbarPos.current = scrollbarPosition
       },
-      onPanResponderMove: (_, gestureState) => {
-        // Calculate new position based on drag
-        let newPosition = scrollbarPosition + gestureState.dy
-        
-        // Ensure position is within bounds
-        newPosition = Math.max(0, Math.min(newPosition, maxScrollbarPosition))
-        
+      onPanResponderMove: (evt) => {
+        // Calculate how far we've dragged from the starting position
+        const dragDelta = evt.nativeEvent.pageY - startDragY.current
+
+        // Calculate new scrollbar position based on the drag delta
+        const newScrollbarPosition = Math.max(0, Math.min(startScrollbarPos.current + dragDelta, maxScrollbarPosition))
+
         // Update scrollbar position
-        scrollbarY.setValue(gestureState.dy)
-        
-        // Calculate corresponding scroll position
-        const scrollPosition = (newPosition / maxScrollbarPosition) * maxScrollPosition
-        
-        // Scroll the list to the calculated position
+        setScrollbarPosition(newScrollbarPosition)
+
+        // Calculate corresponding scroll position for the list
+        const scrollRatio = newScrollbarPosition / maxScrollbarPosition
+        const newScrollPosition = scrollRatio * (contentHeight - containerHeight)
+
+        // Scroll the list to the new position
         if (scrollViewRef.current) {
-          scrollViewRef.current.scrollToOffset({ offset: scrollPosition, animated: false })
+          scrollViewRef.current.scrollToOffset({
+            offset: newScrollPosition,
+            animated: false,
+          })
         }
       },
       onPanResponderRelease: () => {
-        scrollbarY.flattenOffset()
-        setScrollbarPosition(scrollbarY.__getValue())
+        // End dragging
         setIsDragging(false)
-        setScrollEnabled(true)
+        if (setScrollEnabled) setScrollEnabled(true)
       },
       onPanResponderTerminate: () => {
-        scrollbarY.flattenOffset()
-        setScrollbarPosition(scrollbarY.__getValue())
+        // End dragging if terminated
         setIsDragging(false)
-        setScrollEnabled(true)
+        if (setScrollEnabled) setScrollEnabled(true)
       },
-    })
+    }),
   ).current
-  
-  // Function to scroll to top
-  const scrollToTop = () => {
+
+  // Handle track click to jump to position
+  const handleTrackPress = (evt) => {
+    if (isDragging) return
+
+    // Get the y position of the click relative to the track
+    const clickY = evt.nativeEvent.locationY
+
+    // Calculate the new scrollbar position
+    const newScrollbarPosition = Math.max(0, Math.min(clickY - scrollbarHeight / 2, maxScrollbarPosition))
+
+    // Update scrollbar position
+    setScrollbarPosition(newScrollbarPosition)
+
+    // Calculate corresponding scroll position for the list
+    const scrollRatio = newScrollbarPosition / maxScrollbarPosition
+    const newScrollPosition = scrollRatio * (contentHeight - containerHeight)
+
+    // Scroll the list to the new position
     if (scrollViewRef.current) {
-      scrollViewRef.current.scrollToOffset({ offset: 0, animated: true })
+      scrollViewRef.current.scrollToOffset({
+        offset: newScrollPosition,
+        animated: true,
+      })
     }
   }
-  
-  // Function to scroll to bottom
-  const scrollToBottom = () => {
-    if (scrollViewRef.current) {
-      scrollViewRef.current.scrollToOffset({ offset: maxScrollPosition, animated: true })
-    }
-  }
-  
+
   return (
-    <View style={[styles.scrollbarContainer, isDarkMode && { backgroundColor: 'rgba(255,255,255,0.05)' }]}>
-      {/* Top scroll button */}
-      <TouchableOpacity
-        style={[styles.scrollButton, isDarkMode && { backgroundColor: '#333' }]}
-        onPress={scrollToTop}
-      >
-        <View style={styles.arrowUp} />
-      </TouchableOpacity>
-      
+    <View
+      style={[
+        styles.scrollbarContainer,
+        { height: containerHeight },
+        isDarkMode && { backgroundColor: "rgba(255,255,255,0.05)" },
+      ]}
+      onStartShouldSetResponder={() => true}
+      onResponderGrant={handleTrackPress}
+    >
       {/* Scrollbar track */}
-      <View style={[styles.scrollbarTrack, isDarkMode && { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+      <View style={styles.scrollbarTrack}>
         {/* Scrollbar thumb */}
         <Animated.View
           {...panResponder.panHandlers}
@@ -130,85 +157,39 @@ const CustomScrollbar = ({
             styles.scrollbarThumb,
             {
               height: scrollbarHeight,
-              transform: [{ translateY: scrollbarY }],
+              transform: [{ translateY: scrollbarPosition }],
             },
-            isDragging && styles.scrollbarThumbActive,
-            isDarkMode && { backgroundColor: isDragging ? '#3498db' : '#555' },
+            isDarkMode && { backgroundColor: "#666" },
           ]}
         />
       </View>
-      
-      {/* Bottom scroll button */}
-      <TouchableOpacity
-        style={[styles.scrollButton, isDarkMode && { backgroundColor: '#333' }]}
-        onPress={scrollToBottom}
-      >
-        <View style={styles.arrowDown} />
-      </TouchableOpacity>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   scrollbarContainer: {
-    position: 'absolute',
-    right: 2,
-    top: 0,
-    bottom: 0,
+    position: "absolute",
+    right: 0,
     width: 20,
-    backgroundColor: 'rgba(0,0,0,0.03)',
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  scrollButton: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: '#f0f0f0',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginVertical: 2,
-  },
-  arrowUp: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 4,
-    borderRightWidth: 4,
-    borderBottomWidth: 6,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: '#666',
-  },
-  arrowDown: {
-    width: 0,
-    height: 0,
-    borderLeftWidth: 4,
-    borderRightWidth: 4,
-    borderTopWidth: 6,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderTopColor: '#666',
+    backgroundColor: "rgba(0,0,0,0.03)",
+    borderTopLeftRadius: 10,
+    borderBottomLeftRadius: 10,
+    flexDirection: "column",
+    justifyContent: "center",
+    alignItems: "center",
   },
   scrollbarTrack: {
     flex: 1,
-    width: 4,
-    backgroundColor: 'rgba(0,0,0,0.1)',
-    borderRadius: 2,
-    marginVertical: 4,
+    width: 20,
+    alignItems: "center",
+    justifyContent: "flex-start",
   },
   scrollbarThumb: {
-    width: 8,
-    backgroundColor: '#bbb',
-    borderRadius: 4,
-    position: 'absolute',
-    left: -2,
-  },
-  scrollbarThumbActive: {
-    backgroundColor: '#3498db',
     width: 10,
-    left: -3,
+    backgroundColor: "#999",
+    borderRadius: 5,
+    position: "absolute",
   },
 })
 

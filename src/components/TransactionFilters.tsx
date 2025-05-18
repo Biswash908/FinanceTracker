@@ -1,13 +1,12 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useCallback } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native"
 import { useTheme } from "../context/ThemeContext"
 import CategoryBadge from "./CategoryBadge"
 import { MaterialIcons } from "@expo/vector-icons"
 
-// Update the interface to use string[] for selectedCategory
 interface TransactionFiltersProps {
   selectedCategory: string[]
   setSelectedCategory: (category: string[]) => void
@@ -17,9 +16,9 @@ interface TransactionFiltersProps {
   setSortOption: (option: string) => void
   sortDirection: "asc" | "desc"
   setSortDirection: (direction: "asc" | "desc") => void
+  onResetFilters?: () => void
 }
 
-// Update the component to handle multiple category selection
 const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   selectedCategory,
   setSelectedCategory,
@@ -29,11 +28,12 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   setSortOption,
   sortDirection,
   setSortDirection,
+  onResetFilters,
 }) => {
   const { isDarkMode } = useTheme()
   const [showSortOptions, setShowSortOptions] = useState(false)
+  const [isProcessingCategoryChange, setIsProcessingCategoryChange] = useState(false)
 
-  // Category filters
   const categoryFilters = [
     "All",
     "Food",
@@ -49,49 +49,55 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
     "Other",
   ]
 
-  // Transaction types
   const transactionTypes = ["All", "Income", "Expense", "Pending"]
 
-  // Sort options
   const sortOptions = [
     { id: "date", label: "Date" },
     { id: "amount", label: "Amount" },
     { id: "category", label: "Category" },
   ]
 
-  // Toggle sort direction
   const toggleSortDirection = () => {
     setSortDirection(sortDirection === "asc" ? "desc" : "asc")
   }
 
-  // Handle category selection
-  const handleCategoryPress = (category: string) => {
-    if (category === "All") {
-      // If "All" is selected, clear all other selections
-      setSelectedCategory(["All"])
-    } else {
-      // If any other category is selected
-      const newSelectedCategories = [...selectedCategory]
-
-      // If it's already selected, remove it
-      if (newSelectedCategories.includes(category)) {
-        const filteredCategories = newSelectedCategories.filter((c) => c !== category)
-        // If removing the last category, select "All"
-        if (filteredCategories.length === 0 || (filteredCategories.length === 1 && filteredCategories[0] === "All")) {
-          setSelectedCategory(["All"])
-        } else {
-          // Remove "All" if it's in the list and we're selecting specific categories
-          setSelectedCategory(filteredCategories.filter((c) => c !== "All"))
-        }
-      } else {
-        // If it's not selected, add it and remove "All" if present
-        const withoutAll = newSelectedCategories.filter((c) => c !== "All")
-        setSelectedCategory([...withoutAll, category])
+  // Debounced category change handler
+  const handleCategoryPress = useCallback(
+    (category: string) => {
+      if (isProcessingCategoryChange) {
+        console.log("Skipping category change - already processing")
+        return
       }
-    }
-  }
 
-  // Check if a category is selected
+      setIsProcessingCategoryChange(true)
+      console.log(`Category selection changed: ${category}`)
+
+      if (category === "All") {
+        setSelectedCategory(["All"])
+      } else {
+        const newSelectedCategories = [...selectedCategory]
+
+        if (newSelectedCategories.includes(category)) {
+          const filteredCategories = newSelectedCategories.filter((c) => c !== category)
+          if (filteredCategories.length === 0 || (filteredCategories.length === 1 && filteredCategories[0] === "All")) {
+            setSelectedCategory(["All"])
+          } else {
+            setSelectedCategory(filteredCategories.filter((c) => c !== "All"))
+          }
+        } else {
+          const withoutAll = newSelectedCategories.filter((c) => c !== "All")
+          setSelectedCategory([...withoutAll, category])
+        }
+      }
+
+      // Reset the processing flag after a delay
+      setTimeout(() => {
+        setIsProcessingCategoryChange(false)
+      }, 300)
+    },
+    [selectedCategory, setSelectedCategory, isProcessingCategoryChange],
+  )
+
   const isCategorySelected = (category: string) => {
     return selectedCategory.includes(category)
   }
@@ -137,7 +143,7 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.categoryFilters}
-          contentContainerStyle={{ paddingRight: 16 }} // Add right padding to the content
+          contentContainerStyle={{ paddingRight: 16 }}
         >
           {categoryFilters.map((category) => (
             <CategoryBadge
@@ -165,10 +171,8 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
               ]}
               onPress={() => {
                 if (sortOption === option.id) {
-                  // If already selected, toggle direction
                   toggleSortDirection()
                 } else {
-                  // If not selected, select it
                   setSortOption(option.id)
                 }
               }}
@@ -195,6 +199,17 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
           ))}
         </View>
       </View>
+
+      {/* Reset Filters Button */}
+      {onResetFilters && (
+        <TouchableOpacity
+          style={[styles.resetButton, isDarkMode && { backgroundColor: "#333" }]}
+          onPress={onResetFilters}
+        >
+          <MaterialIcons name="refresh" size={14} color={isDarkMode ? "#AAA" : "#666"} />
+          <Text style={[styles.resetButtonText, isDarkMode && { color: "#AAA" }]}>Reset Filters</Text>
+        </TouchableOpacity>
+      )}
     </View>
   )
 }
@@ -230,6 +245,8 @@ const styles = StyleSheet.create({
   },
   typeFilters: {
     flexDirection: "row",
+    flexWrap: "wrap",
+    width: "100%",
   },
   typeChip: {
     backgroundColor: "#f0f0f0",
@@ -237,6 +254,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
+    marginBottom: 8,
+    minWidth: 80,
+    alignItems: "center",
   },
   selectedTypeChip: {
     backgroundColor: "#3498db",
@@ -251,7 +271,7 @@ const styles = StyleSheet.create({
   },
   categoryFilters: {
     flexDirection: "row",
-    paddingBottom: 8, // Add padding at the bottom
+    paddingBottom: 8,
   },
   sortHeader: {
     flexDirection: "row",
@@ -289,6 +309,22 @@ const styles = StyleSheet.create({
   },
   directionIndicator: {
     marginLeft: 6,
+  },
+  resetButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f0f0f0",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginTop: 8,
+    alignSelf: "center",
+  },
+  resetButtonText: {
+    fontSize: 12,
+    color: "#666",
+    marginLeft: 4,
   },
 })
 

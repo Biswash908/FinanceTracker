@@ -2,11 +2,6 @@
  * Categorize a transaction based on its description and pending status
  */
 export const categorizeTransaction = (description: string, isPending?: boolean): string => {
-  // Check for pending status first - this overrides any other category
-  if (isPending === true) {
-    return "pending"
-  }
-
   // If no description is provided, consider it uncategorized
   if (!description || description.trim() === "") {
     return "other"
@@ -39,7 +34,6 @@ export const categorizeTransaction = (description: string, isPending?: boolean):
 }
 
 // Update the calculateFinancials function to handle pending transactions
-// Update the calculateFinancials function to handle pending transactions
 export const calculateFinancials = (transactions) => {
   console.log(`Calculating financials for ${transactions?.length || 0} transactions`)
 
@@ -57,17 +51,13 @@ export const calculateFinancials = (transactions) => {
       const isPending = transaction.pending === true
 
       if (isPending) {
-        // Track pending transactions separately
+        // Track pending transactions separately for the total pending amount
         pendingAmount += Math.abs(amount)
-        
-        // Also categorize pending transactions by their actual category
+
+        // Categorize pending transactions by their actual category
         const category = amount > 0 ? "income" : categorizeTransaction(transaction.description || "", false)
-        
-        // Add to category totals with a "pending_" prefix to track separately if needed
-        const pendingCategoryKey = `pending_${category}`
-        categoryTotals[pendingCategoryKey] = (categoryTotals[pendingCategoryKey] || 0) + Math.abs(amount)
-        
-        // Also add to the regular category for total calculations
+
+        // Add to the regular category for total calculations
         categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
       } else if (amount > 0) {
         income += amount
@@ -87,7 +77,9 @@ export const calculateFinancials = (transactions) => {
 
   const balance = income - expenses
 
-  console.log(`Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}`)
+  console.log(
+    `Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}`,
+  )
 
   return {
     income,
