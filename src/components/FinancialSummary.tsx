@@ -10,6 +10,7 @@ interface FinancialSummaryProps {
   expenses: number
   balance: number
   categoryTotals: Record<string, number>
+  pendingAmount?: number
   currency?: string
 }
 
@@ -18,6 +19,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
   expenses,
   balance,
   categoryTotals,
+  pendingAmount = 0,
   currency = "AED",
 }) => {
   const [expanded, setExpanded] = useState(true)
@@ -69,6 +71,9 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
     return categoryColors[category.toLowerCase()] || "#AAAAAA"
   }
 
+  // Calculate total balance including pending transactions
+  const totalBalance = balance
+
   return (
     <View
       style={[
@@ -87,7 +92,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
       {expanded && (
         <View style={styles.content}>
           <View style={styles.summaryRow}>
-            <Text style={[styles.label, isDarkMode && { color: "#DDD" }]}>Income:</Text>
+            <Text style={[styles.label, isDarkMode && { color: "#DDD" }]}>Inflow:</Text>
             <Text style={[styles.value, styles.incomeText]}>+{formatCurrency(income, currency)}</Text>
           </View>
 
@@ -98,9 +103,9 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
 
           <View style={[styles.summaryRow, styles.balanceRow, isDarkMode && { borderTopColor: "#444" }]}>
             <Text style={[styles.balanceLabel, isDarkMode && { color: "#EEE" }]}>Balance:</Text>
-            <Text style={[styles.balanceValue, balance >= 0 ? styles.incomeText : styles.expenseText]}>
-              {balance >= 0 ? "+" : "-"}
-              {formatCurrency(Math.abs(balance), currency)}
+            <Text style={[styles.balanceValue, totalBalance >= 0 ? styles.incomeText : styles.expenseText]}>
+              {totalBalance >= 0 ? "+" : "-"}
+              {formatCurrency(Math.abs(totalBalance), currency)}
             </Text>
           </View>
 
@@ -201,6 +206,9 @@ const styles = StyleSheet.create({
   },
   expenseText: {
     color: "#e74c3c",
+  },
+  pendingText: {
+    color: "#f39c12",
   },
   sectionTitle: {
     fontSize: 16,

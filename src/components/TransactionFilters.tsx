@@ -10,8 +10,8 @@ import { MaterialIcons } from "@expo/vector-icons"
 interface TransactionFiltersProps {
   selectedCategory: string[]
   setSelectedCategory: (category: string[]) => void
-  selectedType: string
-  setSelectedType: (type: string) => void
+  selectedType: string[]
+  setSelectedType: (type: string[]) => void
   sortOption: string
   setSortOption: (option: string) => void
   sortDirection: "asc" | "desc"
@@ -33,6 +33,7 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   const { isDarkMode } = useTheme()
   const [showSortOptions, setShowSortOptions] = useState(false)
   const [isProcessingCategoryChange, setIsProcessingCategoryChange] = useState(false)
+  const [isProcessingTypeChange, setIsProcessingTypeChange] = useState(false)
 
   const categoryFilters = [
     "All",
@@ -49,7 +50,8 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
     "Other",
   ]
 
-  const transactionTypes = ["All", "Income", "Expense", "Pending"]
+  // Changed "Income" to "Inflow" in transaction types
+  const transactionTypes = ["All", "Inflow", "Expense", "Pending"]
 
   const sortOptions = [
     { id: "date", label: "Date" },
@@ -60,6 +62,56 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   const toggleSortDirection = () => {
     setSortDirection(sortDirection === "asc" ? "desc" : "asc")
   }
+
+  // Handle transaction type selection
+  const handleTypePress = useCallback(
+    (type: string) => {
+      if (isProcessingTypeChange) {
+        console.log("Skipping type change - already processing")
+        return
+      }
+
+      setIsProcessingTypeChange(true)
+      console.log(`Type selection changed: ${type}`)
+
+      if (type === "All") {
+        // If "All" is clicked, deselect everything else and select only "All"
+        setSelectedType(["All"])
+      } else {
+        // If any other type is clicked
+        const newSelectedTypes = [...selectedType]
+
+        // If "All" is currently selected, remove it when selecting a specific type
+        if (newSelectedTypes.includes("All")) {
+          newSelectedTypes.splice(newSelectedTypes.indexOf("All"), 1)
+        }
+
+        // Toggle the selected type
+        if (newSelectedTypes.includes(type)) {
+          // If this is the only selected type, don't deselect it
+          if (newSelectedTypes.length === 1) {
+            // If trying to deselect the last type, switch to "All"
+            setSelectedType(["All"])
+            setIsProcessingTypeChange(false)
+            return
+          }
+
+          // Remove the type
+          const filteredTypes = newSelectedTypes.filter((t) => t !== type)
+          setSelectedType(filteredTypes)
+        } else {
+          // Add the type
+          setSelectedType([...newSelectedTypes, type])
+        }
+      }
+
+      // Reset the processing flag after a delay
+      setTimeout(() => {
+        setIsProcessingTypeChange(false)
+      }, 300)
+    },
+    [selectedType, setSelectedType, isProcessingTypeChange],
+  )
 
   // Debounced category change handler
   const handleCategoryPress = useCallback(
@@ -102,27 +154,36 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
     return selectedCategory.includes(category)
   }
 
+  const isTypeSelected = (type: string) => {
+    return selectedType.includes(type)
+  }
+
   return (
     <View style={[styles.container, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
-      {/* Transaction Type Filter */}
+      {/* Transaction Type Filter - Now horizontal scrollable */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, isDarkMode && { color: "#DDD" }]}>Transaction Type</Text>
-        <View style={styles.typeFilters}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.typeFiltersScroll}
+          contentContainerStyle={styles.typeFiltersContent}
+        >
           {transactionTypes.map((type) => (
             <TouchableOpacity
               key={type}
               style={[
                 styles.typeChip,
-                selectedType === type && styles.selectedTypeChip,
+                isTypeSelected(type) && styles.selectedTypeChip,
                 isDarkMode && { backgroundColor: "#333" },
-                selectedType === type && isDarkMode && { backgroundColor: "#2C5282" },
+                isTypeSelected(type) && isDarkMode && { backgroundColor: "#2C5282" },
               ]}
-              onPress={() => setSelectedType(type)}
+              onPress={() => handleTypePress(type)}
             >
               <Text
                 style={[
                   styles.typeChipText,
-                  selectedType === type && styles.selectedTypeChipText,
+                  isTypeSelected(type) && styles.selectedTypeChipText,
                   isDarkMode && { color: "#DDD" },
                 ]}
               >
@@ -130,21 +191,16 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       </View>
 
-      {/* Category Filter */}
+      {/* Category Filter - Now vertical */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, isDarkMode && { color: "#DDD" }]}>Category</Text>
         <Text style={[styles.categoryHint, isDarkMode && { color: "#AAA" }]}>
           Tap multiple categories to filter by more than one
         </Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoryFilters}
-          contentContainerStyle={{ paddingRight: 16 }}
-        >
+        <View style={styles.categoryFiltersGrid}>
           {categoryFilters.map((category) => (
             <CategoryBadge
               key={category}
@@ -153,7 +209,7 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
               onPress={() => handleCategoryPress(category)}
             />
           ))}
-        </ScrollView>
+        </View>
       </View>
 
       {/* Sort Options */}
@@ -243,10 +299,11 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     fontStyle: "italic",
   },
-  typeFilters: {
+  typeFiltersScroll: {
     flexDirection: "row",
-    flexWrap: "wrap",
-    width: "100%",
+  },
+  typeFiltersContent: {
+    paddingRight: 16,
   },
   typeChip: {
     backgroundColor: "#f0f0f0",
@@ -254,7 +311,6 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     marginRight: 8,
-    marginBottom: 8,
     minWidth: 80,
     alignItems: "center",
   },
@@ -269,9 +325,11 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "bold",
   },
-  categoryFilters: {
+  categoryFiltersGrid: {
     flexDirection: "row",
-    paddingBottom: 8,
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
   },
   sortHeader: {
     flexDirection: "row",

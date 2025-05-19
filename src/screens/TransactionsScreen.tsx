@@ -69,7 +69,7 @@ const TransactionsScreen = () => {
   const [searchQuery, setSearchQuery] = useState("")
   // Update to use array for multiple category selection
   const [selectedCategory, setSelectedCategory] = useState<string[]>(["All"])
-  const [selectedType, setSelectedType] = useState("All")
+  const [selectedType, setSelectedType] = useState<string[]>(["All"])
   const [sortBy, setSortBy] = useState<"date" | "amount" | "category">("date")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
   const [currentPage, setCurrentPage] = useState(1)
@@ -129,21 +129,38 @@ const TransactionsScreen = () => {
           // Check for pending status
           const isPending = transaction.pending === true
 
+          // Check if this is a refund or reversal
+          const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(
+            transaction.description.toLowerCase(),
+          )
+
           // Filter by category
           const amount = transaction.amount ? Number.parseFloat(transaction.amount) : 0
           const isIncome = amount > 0
-          const category = isIncome ? "income" : categorizeTransaction(transaction.description, false)
+
+          // Determine category based on transaction type
+          let category
+          if (isIncome && isRefundOrReversal) {
+            // For refunds/reversals, use the categorizeTransaction function
+            category = categorizeTransaction(transaction.description, false)
+          } else if (isIncome) {
+            // For regular income
+            category = "income"
+          } else {
+            // For expenses
+            category = categorizeTransaction(transaction.description, false)
+          }
 
           // Check if "All" is selected or if the transaction category is in the selected categories
           const matchesCategory =
             selectedCategory.includes("All") || selectedCategory.some((c) => c.toLowerCase() === category.toLowerCase())
 
-          // Filter by transaction type - now including pending as a separate type
+          // Filter by transaction type - now handling multiple selected types
           const matchesType =
-            selectedType === "All" ||
-            (selectedType === "Income" && isIncome && !isPending) ||
-            (selectedType === "Expense" && !isIncome && !isPending) ||
-            (selectedType === "Pending" && isPending)
+            selectedType.includes("All") ||
+            (isPending && selectedType.includes("Pending")) ||
+            (!isPending && isIncome && selectedType.includes("Inflow")) ||
+            (!isPending && !isIncome && selectedType.includes("Expense"))
 
           return matchesQuery && matchesCategory && matchesType
         })
@@ -586,15 +603,30 @@ const TransactionsScreen = () => {
     const amount = item.amount ? Number.parseFloat(item.amount) : 0
     // Check for pending status
     const isPending = item.pending === true
+    // Check if this is a refund or reversal
+    const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(
+      item.description.toLowerCase(),
+    )
 
-    // Determine the category based on amount and description, regardless of pending status
-    const category = amount > 0 ? "income" : categorizeTransaction(item.description, false)
+    // Determine the category based on amount, description, and refund status
+    let category
+    if (amount > 0 && isRefundOrReversal) {
+      // For refunds/reversals, use the categorizeTransaction function
+      category = categorizeTransaction(item.description, false)
+    } else if (amount > 0) {
+      // For regular income
+      category = "income"
+    } else {
+      // For expenses
+      category = categorizeTransaction(item.description, false)
+    }
 
     return (
       <MemoizedTransactionCard
         transaction={item}
         category={category}
         isPending={isPending}
+        isRefundOrReversal={isRefundOrReversal}
         onPress={() => console.log("Transaction pressed:", item.id)}
       />
     )
@@ -641,6 +673,13 @@ const TransactionsScreen = () => {
     if (!lastRefreshTime) return "Never"
 
     return lastRefreshTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  }
+
+  // Update the reset filters function
+  const onResetFilters = () => {
+    setSelectedCategory(["All"])
+    setSelectedType(["All"])
+    // Don't force refresh here, just update the filter
   }
 
   return (
@@ -720,11 +759,7 @@ const TransactionsScreen = () => {
           setSortOption={setSortBy}
           sortDirection={sortOrder}
           setSortDirection={setSortOrder}
-          onResetFilters={() => {
-            setSelectedCategory(["All"])
-            setSelectedType("All")
-            // Don't force refresh here, just update the filter
-          }}
+          onResetFilters={onResetFilters}
         />
 
         {/* Results Count */}

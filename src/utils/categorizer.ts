@@ -9,20 +9,119 @@ export const categorizeTransaction = (description: string, isPending?: boolean):
 
   description = description.toLowerCase()
 
+  // Check if this is a refund or reversal
+  const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(description)
+
   // Define category keywords
   const categories = {
-    food: ["restaurant", "cafe", "coffee", "grocery", "food", "meal", "pizza", "burger", "bakery", "supermarket"],
-    shopping: ["shop", "store", "mall", "retail", "amazon", "ebay", "clothing", "fashion", "purchase"],
-    entertainment: ["movie", "cinema", "theater", "netflix", "spotify", "game", "entertainment", "concert", "ticket"],
-    utilities: ["electric", "water", "gas", "internet", "phone", "bill", "utility", "utilities"],
-    transport: ["uber", "lyft", "taxi", "transport", "bus", "train", "metro", "fuel", "gas station", "parking"],
-    education: ["school", "college", "university", "course", "class", "tuition", "education", "book", "learning"],
-    health: ["doctor", "hospital", "medical", "pharmacy", "health", "dental", "clinic", "medicine"],
-    charity: ["donation", "donate", "charity", "nonprofit", "ngo"],
-    housing: ["rent", "mortgage", "apartment", "house", "housing", "accommodation", "property"],
+    food: [
+      "restaurant",
+      "cafe",
+      "coffee",
+      "grocery",
+      "food",
+      "meal",
+      "pizza",
+      "burger",
+      "bakery",
+      "supermarket",
+      "dining",
+    ],
+    shopping: ["shop", "store", "mall", "retail", "amazon", "ebay", "clothing", "fashion", "purchase", "online"],
+    entertainment: [
+      "movie",
+      "cinema",
+      "theater",
+      "netflix",
+      "spotify",
+      "disney",
+      "hulu",
+      "hbo",
+      "game",
+      "entertainment",
+      "concert",
+      "ticket",
+      "subscription",
+      "streaming",
+      "music",
+      "video",
+      "play",
+      "show",
+    ],
+    utilities: [
+      "electric",
+      "water",
+      "gas",
+      "internet",
+      "phone",
+      "bill",
+      "utility",
+      "utilities",
+      "broadband",
+      "telecom",
+    ],
+    transport: [
+      "uber",
+      "lyft",
+      "taxi",
+      "transport",
+      "bus",
+      "train",
+      "metro",
+      "fuel",
+      "gas station",
+      "parking",
+      "car",
+      "vehicle",
+    ],
+    education: [
+      "school",
+      "college",
+      "university",
+      "course",
+      "class",
+      "tuition",
+      "education",
+      "book",
+      "learning",
+      "study",
+    ],
+    health: [
+      "doctor",
+      "hospital",
+      "medical",
+      "pharmacy",
+      "health",
+      "dental",
+      "clinic",
+      "medicine",
+      "insurance",
+      "healthcare",
+      "protect plus",
+      "premium",
+      "coverage",
+      "wellness",
+    ],
+    charity: ["donation", "donate", "charity", "nonprofit", "ngo", "foundation", "giving"],
+    housing: ["rent", "mortgage", "apartment", "house", "housing", "accommodation", "property", "real estate", "home"],
   }
 
-  // Check each category
+  // If it's a refund or reversal, try to determine the original category
+  if (isRefundOrReversal) {
+    // Check each category for keywords
+    for (const [category, keywords] of Object.entries(categories)) {
+      if (keywords.some((keyword) => description.includes(keyword))) {
+        console.log(`Categorized refund/reversal "${description}" as ${category}`)
+        return category
+      }
+    }
+
+    // If we couldn't determine a specific category for the refund, use "other"
+    console.log(`Couldn't determine specific category for refund/reversal "${description}", using "other"`)
+    return "other"
+  }
+
+  // Regular categorization for non-refund transactions
   for (const [category, keywords] of Object.entries(categories)) {
     if (keywords.some((keyword) => description.includes(keyword))) {
       return category
@@ -49,25 +148,56 @@ export const calculateFinancials = (transactions) => {
 
       const amount = Number.parseFloat(transaction.amount || 0)
       const isPending = transaction.pending === true
+      const description = transaction.description || ""
+
+      // Check if this is a refund or reversal
+      const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(
+        description.toLowerCase(),
+      )
 
       if (isPending) {
         // Track pending transactions separately for the total pending amount
         pendingAmount += Math.abs(amount)
 
-        // Categorize pending transactions by their actual category
-        const category = amount > 0 ? "income" : categorizeTransaction(transaction.description || "", false)
+        // Categorize pending transactions
+        let category
+        if (amount > 0) {
+          // For positive amounts (inflows), check if it's a refund/reversal
+          if (isRefundOrReversal) {
+            category = categorizeTransaction(description, false)
+          } else {
+            category = "income"
+          }
+        } else {
+          // For negative amounts (outflows)
+          category = categorizeTransaction(description, false)
+        }
 
-        // Add to the regular category for total calculations
+        // Add to the category for total calculations
         categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
+
+        // Include pending transactions in the balance calculation
+        if (amount > 0) {
+          income += amount
+        } else {
+          expenses += Math.abs(amount)
+        }
       } else if (amount > 0) {
         income += amount
-        // Add to income category
-        categoryTotals["income"] = (categoryTotals["income"] || 0) + amount
+
+        // For positive amounts (inflows), check if it's a refund/reversal
+        if (isRefundOrReversal) {
+          const category = categorizeTransaction(description, false)
+          categoryTotals[category] = (categoryTotals[category] || 0) + amount
+        } else {
+          // Add to income category if not a refund/reversal
+          categoryTotals["income"] = (categoryTotals["income"] || 0) + amount
+        }
       } else if (amount < 0) {
         expenses += Math.abs(amount)
 
         // Categorize and add to category totals
-        const category = categorizeTransaction(transaction.description || "", false)
+        const category = categorizeTransaction(description, false)
         categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
       }
     })
@@ -78,7 +208,7 @@ export const calculateFinancials = (transactions) => {
   const balance = income - expenses
 
   console.log(
-    `Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}`,
+    `Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}, Balance=${balance.toFixed(2)}`,
   )
 
   return {
