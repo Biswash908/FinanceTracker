@@ -25,9 +25,9 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
   const [expanded, setExpanded] = useState(true)
   const { isDarkMode } = useTheme()
 
-  // Format currency
+  // Format currency with commas
   const formatCurrency = (amount, currency = "AED") => {
-    return `${Math.abs(amount).toFixed(2)} ${currency}`
+    return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`
   }
 
   // Define category order (most important first, other last)
@@ -71,9 +71,6 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
     return categoryColors[category.toLowerCase()] || "#AAAAAA"
   }
 
-  // Calculate total balance including pending transactions
-  const totalBalance = balance
-
   return (
     <View
       style={[
@@ -101,11 +98,17 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
             <Text style={[styles.value, styles.expenseText]}>-{formatCurrency(expenses, currency)}</Text>
           </View>
 
+          {/* Always show the pending line, even if amount is 0 */}
+          <View style={styles.summaryRow}>
+            <Text style={[styles.label, isDarkMode && { color: "#DDD" }]}>Pending:</Text>
+            <Text style={[styles.value, styles.pendingText]}>-{formatCurrency(pendingAmount, currency)}</Text>
+          </View>
+
           <View style={[styles.summaryRow, styles.balanceRow, isDarkMode && { borderTopColor: "#444" }]}>
             <Text style={[styles.balanceLabel, isDarkMode && { color: "#EEE" }]}>Balance:</Text>
-            <Text style={[styles.balanceValue, totalBalance >= 0 ? styles.incomeText : styles.expenseText]}>
-              {totalBalance >= 0 ? "+" : "-"}
-              {formatCurrency(Math.abs(totalBalance), currency)}
+            <Text style={[styles.balanceValue, balance >= 0 ? styles.incomeText : styles.expenseText]}>
+              {balance >= 0 ? "+" : "-"}
+              {formatCurrency(Math.abs(balance), currency)}
             </Text>
           </View>
 

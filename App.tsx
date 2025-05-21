@@ -1,194 +1,253 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
-import { View, Text, StyleSheet, ActivityIndicator, StatusBar, TouchableOpacity } from "react-native"
+import { useState, useEffect } from "react"
 import { NavigationContainer } from "@react-navigation/native"
+import { createStackNavigator } from "@react-navigation/stack"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
-import { Feather } from "@expo/vector-icons"
+import { SafeAreaProvider } from "react-native-safe-area-context"
+import { StatusBar } from "expo-status-bar"
+import { MaterialIcons } from "@expo/vector-icons"
+import AsyncStorage from "@react-native-async-storage/async-storage"
+import { View, StyleSheet, ActivityIndicator, Alert } from "react-native"
 
-// Screens
+// Import screens
 import DashboardScreen from "./src/screens/DashboardScreen"
 import TransactionsScreen from "./src/screens/TransactionsScreen"
 import SettingsScreen from "./src/screens/SettingsScreen"
+import LoginScreen from "./src/screens/LoginScreen"
+import OnboardingScreen from "./src/screens/OnboardingScreen"
 
-// Services
+// Import components
+import LeanWebView from "./src/components/LeanWebView"
+
+// Import context
+import { ThemeProvider } from "./src/context/ThemeContext"
+
+// Import environment variables
+import { APP_TOKEN, CUSTOMER_ID } from "@env"
+
+// Import auth service
 import { authService } from "./src/services/auth-service"
 
-// Create bottom tab navigator
+// Create navigators
+const Stack = createStackNavigator()
 const Tab = createBottomTabNavigator()
 
-// Error Boundary Component
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props)
-    this.state = { hasError: false, error: null }
-  }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error }
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error("App Error:", error, errorInfo)
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <View style={styles.errorContainer}>
-          <Feather name="alert-triangle" size={50} color="#e74c3c" />
-          <Text style={styles.errorTitle}>Something went wrong</Text>
-          <Text style={styles.errorMessage}>{this.state.error?.message || "An unexpected error occurred"}</Text>
-          <TouchableOpacity style={styles.errorButton} onPress={() => this.setState({ hasError: false })}>
-            <Text style={styles.errorButtonText}>Try Again</Text>
-          </TouchableOpacity>
-        </View>
-      )
-    }
-
-    return this.props.children
-  }
-}
-
-// Main Navigation Component
-const AppNavigator = () => {
+// Main tab navigator
+const TabNavigator = () => {
   return (
-    <NavigationContainer>
-      <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-      <Tab.Navigator
-        screenOptions={({ route }) => ({
-          tabBarIcon: ({ focused, color, size }) => {
-            let iconName
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName
 
-            if (route.name === "Dashboard") {
-              iconName = "home"
-            } else if (route.name === "Transactions") {
-              iconName = "list"
-            } else if (route.name === "Settings") {
-              iconName = "settings"
-            }
+          if (route.name === "Dashboard") {
+            iconName = "dashboard"
+          } else if (route.name === "Transactions") {
+            iconName = "receipt-long"
+          } else if (route.name === "Settings") {
+            iconName = "settings"
+          }
 
-            return <Feather name={iconName} size={size} color={color} />
-          },
-          tabBarActiveTintColor: "#3498db",
-          tabBarInactiveTintColor: "#666",
-          headerShown: false,
-          tabBarStyle: {
-            backgroundColor: "#fff",
-            borderTopWidth: 1,
-            borderTopColor: "#eee",
-            paddingTop: 5,
-            paddingBottom: 5,
-            height: 60,
-          },
-          tabBarLabelStyle: {
-            fontSize: 12,
-            fontWeight: "500",
-            paddingBottom: 5,
-          },
-        })}
-      >
-        <Tab.Screen name="Dashboard" component={DashboardScreen} />
-        <Tab.Screen name="Transactions" component={TransactionsScreen} />
-        <Tab.Screen name="Settings" component={SettingsScreen} />
-      </Tab.Navigator>
-    </NavigationContainer>
+          return <MaterialIcons name={iconName} size={size} color={color} />
+        },
+        tabBarActiveTintColor: "#3498db",
+        tabBarInactiveTintColor: "gray",
+        headerShown: false,
+      })}
+    >
+      <Tab.Screen name="Dashboard" component={DashboardScreen} />
+      <Tab.Screen name="Transactions" component={TransactionsScreen} />
+      <Tab.Screen name="Settings" component={SettingsScreen} />
+    </Tab.Navigator>
   )
 }
 
-// Main App Component
-export default function App() {
+// Main app component
+const App = () => {
   const [isLoading, setIsLoading] = useState(true)
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [hasOnboarded, setHasOnboarded] = useState(false)
+  const [customerId, setCustomerId] = useState(CUSTOMER_ID || null)
+  const [showLeanWeb, setShowLeanWeb] = useState(false)
+  const [authInitialized, setAuthInitialized] = useState(false)
 
-  // Check authentication status on app load
+  // Initialize auth service
   useEffect(() => {
-    const checkAuth = async () => {
+    const initAuth = async () => {
       try {
-        const isValid = await authService.validateToken()
-        setIsAuthenticated(isValid)
+        // Validate token on startup
+        await authService.validateToken()
+        setAuthInitialized(true)
       } catch (error) {
-        console.error("Auth check failed:", error)
-        setIsAuthenticated(false)
-      } finally {
-        // Simulate a splash screen delay
-        setTimeout(() => {
-          setIsLoading(false)
-        }, 1500)
+        console.error("Error initializing auth service:", error)
+        // Continue anyway, the auth service will try to get a token when needed
+        setAuthInitialized(true)
       }
     }
 
-    checkAuth()
+    initAuth()
   }, [])
 
-  // Show splash screen while loading
+  // Check login status on app start
+  useEffect(() => {
+    const checkLoginStatus = async () => {
+      try {
+        const userToken = await AsyncStorage.getItem("userToken")
+        const onboardingComplete = await AsyncStorage.getItem("onboardingComplete")
+        const storedCustomerId = await AsyncStorage.getItem("customerId")
+
+        if (storedCustomerId) {
+          setCustomerId(storedCustomerId)
+        } else if (CUSTOMER_ID) {
+          await AsyncStorage.setItem("customerId", CUSTOMER_ID)
+          setCustomerId(CUSTOMER_ID)
+        }
+
+        setIsLoggedIn(userToken !== null)
+        setHasOnboarded(onboardingComplete === "true")
+      } catch (error) {
+        console.error("Error checking login status:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    if (authInitialized) {
+      checkLoginStatus()
+    }
+  }, [authInitialized])
+
+  // Check for Lean SDK trigger
+  useEffect(() => {
+    if (!isLoggedIn) return
+
+    const checkLeanTrigger = async () => {
+      try {
+        const triggerLeanConnect = await AsyncStorage.getItem("triggerLeanConnect")
+
+        if (triggerLeanConnect === "true" && customerId) {
+          // Clear the trigger flag
+          await AsyncStorage.removeItem("triggerLeanConnect")
+
+          // Show the Lean WebView
+          setShowLeanWeb(true)
+        }
+      } catch (error) {
+        console.error("Error checking Lean trigger:", error)
+      }
+    }
+
+    checkLeanTrigger()
+
+    // Set up an interval to check for the trigger
+    const intervalId = setInterval(checkLeanTrigger, 2000)
+
+    return () => clearInterval(intervalId)
+  }, [isLoggedIn, customerId])
+
+  // Handle login
+  const handleLogin = async (token, userId) => {
+    try {
+      await AsyncStorage.setItem("userToken", token)
+
+      // Use the provided CUSTOMER_ID or generate one
+      const custId = CUSTOMER_ID || `customer_${userId}_${Date.now()}`
+      await AsyncStorage.setItem("customerId", custId)
+      setCustomerId(custId)
+
+      setIsLoggedIn(true)
+    } catch (error) {
+      console.error("Error during login:", error)
+    }
+  }
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.removeItem("userToken")
+      setIsLoggedIn(false)
+      // Also clear auth service token
+      authService.logout()
+    } catch (error) {
+      console.error("Error during logout:", error)
+    }
+  }
+
+  // Complete onboarding
+  const completeOnboarding = async () => {
+    try {
+      await AsyncStorage.setItem("onboardingComplete", "true")
+      setHasOnboarded(true)
+    } catch (error) {
+      console.error("Error completing onboarding:", error)
+    }
+  }
+
+  // Handle Lean WebView close
+  const handleLeanWebViewClose = (status, message) => {
+    setShowLeanWeb(false)
+
+    if (status === "SUCCESS") {
+      // Handle successful connection
+      AsyncStorage.setItem("bankConnected", "true")
+      Alert.alert("Success", message || "Bank account connected successfully!")
+    } else if (status === "ERROR") {
+      // Handle error
+      Alert.alert("Error", message || "Error connecting bank account")
+    } else if (status === "CANCELLED") {
+      // Handle cancellation
+      Alert.alert("Cancelled", message || "Bank connection was cancelled")
+    }
+  }
+
   if (isLoading) {
     return (
-      <View style={styles.splashContainer}>
-        <Text style={styles.splashTitle}>DragX's Meso Tracker</Text>
-        <ActivityIndicator size="large" color="#3498db" style={styles.splashLoader} />
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#3498db" />
       </View>
     )
   }
 
   return (
-    <ErrorBoundary>
-      <View style={styles.container}>
-        <AppNavigator />
-      </View>
-    </ErrorBoundary>
+    <SafeAreaProvider>
+      <ThemeProvider>
+        <NavigationContainer>
+          <StatusBar style="auto" />
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            {!hasOnboarded ? (
+              <Stack.Screen name="Onboarding">
+                {(props) => <OnboardingScreen {...props} onComplete={completeOnboarding} />}
+              </Stack.Screen>
+            ) : !isLoggedIn ? (
+              <Stack.Screen name="Login">{(props) => <LoginScreen {...props} onLogin={handleLogin} />}</Stack.Screen>
+            ) : (
+              <Stack.Screen name="Main">
+                {(props) => (
+                  <>
+                    <TabNavigator {...props} />
+                    {/* Show Lean WebView when triggered */}
+                    {showLeanWeb && (
+                      <LeanWebView customerId={customerId} appToken={APP_TOKEN} onClose={handleLeanWebViewClose} />
+                    )}
+                  </>
+                )}
+              </Stack.Screen>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </ThemeProvider>
+    </SafeAreaProvider>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#f5f5f5",
-  },
-  splashContainer: {
+  loadingContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#3498db",
-  },
-  splashTitle: {
-    fontSize: 32,
-    fontWeight: "bold",
-    color: "#fff",
-    marginBottom: 20,
-  },
-  splashLoader: {
-    marginTop: 20,
-  },
-  errorContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 20,
     backgroundColor: "#f5f5f5",
-  },
-  errorTitle: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#333",
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  errorMessage: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 20,
-  },
-  errorButton: {
-    backgroundColor: "#3498db",
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  errorButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "500",
   },
 })
+
+export default App

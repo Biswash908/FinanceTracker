@@ -34,7 +34,6 @@ import { categorizeTransaction, calculateFinancials } from "../utils/categorizer
 import { StorageService } from "../services/storage-service"
 import { exportTransactionsToExcel } from "../utils/excel-export"
 import { useTheme } from "../context/ThemeContext"
-import React from "react"
 
 // Import the date utility functions
 import { formatDateToString, getFirstDayOfMonth, getCurrentDate } from "../utils/date-utils"
@@ -67,6 +66,7 @@ const TransactionsScreen = () => {
   const [startDate, setStartDate] = useState(getFirstDayOfMonth())
   const [endDate, setEndDate] = useState(getCurrentDate())
   const [searchQuery, setSearchQuery] = useState("")
+  const [isSearchVisible, setIsSearchVisible] = useState(false)
   // Update to use array for multiple category selection
   const [selectedCategory, setSelectedCategory] = useState<string[]>(["All"])
   const [selectedType, setSelectedType] = useState<string[]>(["All"])
@@ -99,6 +99,33 @@ const TransactionsScreen = () => {
   const transactionListRef = useRef(null)
   const scrollY = useRef(new Animated.Value(0)).current
   const isLoadingAllPagesRef = useRef(false)
+  const searchInputRef = useRef(null)
+  const searchWidthAnim = useRef(new Animated.Value(0)).current
+
+  // Toggle search visibility
+  const toggleSearch = () => {
+    if (isSearchVisible) {
+      // Hide search
+      Animated.timing(searchWidthAnim, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: false,
+      }).start(() => {
+        setIsSearchVisible(false)
+        setSearchQuery("")
+      })
+    } else {
+      // Show search
+      setIsSearchVisible(true)
+      Animated.timing(searchWidthAnim, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: false,
+      }).start(() => {
+        searchInputRef.current?.focus()
+      })
+    }
+  }
 
   // Filter transactions based on search query, category, type, and account
   const filteredTransactions = useMemo(() => {
@@ -590,48 +617,6 @@ const TransactionsScreen = () => {
     }
   }, [sortedTransactions, startDate, endDate])
 
-  // Optimize the renderTransactionItem function with React.memo
-  const MemoizedTransactionCard = React.memo(TransactionCard)
-
-  // Replace the renderTransactionItem function with this optimized version
-  const renderTransactionItem = useCallback(({ item }) => {
-    if (!item || !item.description) {
-      console.warn("Invalid transaction item:", item)
-      return null
-    }
-
-    const amount = item.amount ? Number.parseFloat(item.amount) : 0
-    // Check for pending status
-    const isPending = item.pending === true
-    // Check if this is a refund or reversal
-    const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(
-      item.description.toLowerCase(),
-    )
-
-    // Determine the category based on amount, description, and refund status
-    let category
-    if (amount > 0 && isRefundOrReversal) {
-      // For refunds/reversals, use the categorizeTransaction function
-      category = categorizeTransaction(item.description, false)
-    } else if (amount > 0) {
-      // For regular income
-      category = "income"
-    } else {
-      // For expenses
-      category = categorizeTransaction(item.description, false)
-    }
-
-    return (
-      <MemoizedTransactionCard
-        transaction={item}
-        category={category}
-        isPending={isPending}
-        isRefundOrReversal={isRefundOrReversal}
-        onPress={() => console.log("Transaction pressed:", item.id)}
-      />
-    )
-  }, [])
-
   // Handle content size change
   const handleContentSizeChange = (w: number, h: number) => {
     setContentHeight(h)
@@ -682,6 +667,12 @@ const TransactionsScreen = () => {
     // Don't force refresh here, just update the filter
   }
 
+  // Calculate the search width based on animation value
+  const searchWidth = searchWidthAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0%", "100%"],
+  })
+
   return (
     <SafeAreaView style={[styles.safeArea, isDarkMode && { backgroundColor: "#121212" }]}>
       <ScrollView
@@ -728,19 +719,40 @@ const TransactionsScreen = () => {
           </View>
         </View>
 
-        {/* Search */}
+        {/* Search Bar - Collapsible from left to right */}
         <View style={styles.searchContainer}>
-          <TextInput
-            style={[
-              styles.searchInput,
-              isDarkMode && { backgroundColor: "#2A2A2A", color: "#FFF", borderColor: "#444" },
-            ]}
-            placeholder="Search by description, amount or account..."
-            placeholderTextColor={isDarkMode ? "#888" : "#999"}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            clearButtonMode="while-editing"
-          />
+          <View style={styles.searchRow}>
+            <TouchableOpacity
+              style={[
+                styles.searchButton,
+                isDarkMode && { backgroundColor: "#2A2A2A" },
+                isSearchVisible && { marginRight: 8 },
+              ]}
+              onPress={toggleSearch}
+            >
+              <MaterialIcons
+                name={isSearchVisible ? "close" : "search"}
+                size={24}
+                color={isDarkMode ? "#DDD" : "#333"}
+              />
+            </TouchableOpacity>
+            {isSearchVisible && (
+              <Animated.View style={[styles.searchInputContainer, { width: searchWidth }]}>
+                <TextInput
+                  ref={searchInputRef}
+                  style={[
+                    styles.searchInput,
+                    isDarkMode && { backgroundColor: "#2A2A2A", color: "#FFF", borderColor: "#444" },
+                  ]}
+                  placeholder="Search transactions..."
+                  placeholderTextColor={isDarkMode ? "#888" : "#999"}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  clearButtonMode="while-editing"
+                />
+              </Animated.View>
+            )}
+          </View>
         </View>
 
         {/* Filters and Sorting */}
@@ -765,7 +777,8 @@ const TransactionsScreen = () => {
         {/* Results Count */}
         <View style={styles.resultsCountContainer}>
           <Text style={[styles.resultsCount, isDarkMode && { color: "#AAA" }]}>
-            {sortedTransactions.length} {sortedTransactions.length === 1 ? "transaction" : "transactions"} found
+            {sortedTransactions.length.toLocaleString()}{" "}
+            {sortedTransactions.length === 1 ? "transaction" : "transactions"} found
           </Text>
           <Text style={[styles.sortInfo, isDarkMode && { color: "#AAA" }]}>
             Sorted by: {sortBy.charAt(0).toUpperCase() + sortBy.slice(1)} {sortOrder === "asc" ? "↑" : "↓"}
@@ -797,7 +810,7 @@ const TransactionsScreen = () => {
             <View>
               <Text style={[styles.transactionBoxTitle, isDarkMode && { color: "#FFF" }]}>Transaction History</Text>
               <Text style={[styles.transactionSubtitle, isDarkMode && { color: "#AAA" }]}>
-                Showing {sortedTransactions.length} transactions
+                Showing {sortedTransactions.length.toLocaleString()} transactions
               </Text>
             </View>
             <TouchableOpacity
@@ -843,7 +856,14 @@ const TransactionsScreen = () => {
                 ref={transactionListRef}
                 data={sortedTransactions}
                 keyExtractor={(item) => item?.id || `transaction-${Math.random().toString(36).substring(2, 15)}`}
-                renderItem={renderTransactionItem}
+                renderItem={({ item }) => (
+                  <TransactionCard
+                    transaction={item}
+                    category={categorizeTransaction(item.description, item.pending)}
+                    isPending={item.pending === true}
+                    onPress={() => console.log("Transaction pressed:", item.id)}
+                  />
+                )}
                 contentContainerStyle={styles.transactionListContent}
                 nestedScrollEnabled={true}
                 scrollEnabled={flatListScrollEnabled}
@@ -988,7 +1008,16 @@ const styles = StyleSheet.create({
     color: "#666",
   },
   searchContainer: {
-    marginVertical: 16,
+    marginVertical: 10,
+  },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-start", // Changed to start from left
+  },
+  searchInputContainer: {
+    flex: 1,
+    overflow: "hidden",
   },
   searchInput: {
     backgroundColor: "#fff",
@@ -1002,6 +1031,20 @@ const styles = StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: "#eee",
+    height: 50,
+  },
+  searchButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
   resultsCountContainer: {
     marginBottom: 16,

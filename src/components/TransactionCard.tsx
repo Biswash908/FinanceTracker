@@ -28,9 +28,9 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
   const accountName = transaction.account_name || "Unknown Account"
   const currency = transaction.currency_code || "AED"
 
-  // Format currency
+  // Format currency with commas
   const formatCurrency = (amount, currency = "AED") => {
-    return `${Math.abs(amount).toFixed(2)} ${currency}`
+    return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`
   }
 
   // Truncate long descriptions
@@ -61,21 +61,18 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
     <TouchableOpacity
       style={[
         styles.container,
-        isPending ? styles.pendingItem : (isIncome ? styles.incomeItem : styles.expenseItem),
-        isDarkMode && { 
-          backgroundColor: "#2A2A2A", 
-          borderLeftColor: isPending ? "#f39c12" : (isIncome ? "#27ae60" : "#e74c3c") 
+        isPending ? styles.pendingItem : isIncome ? styles.incomeItem : styles.expenseItem,
+        isDarkMode && {
+          backgroundColor: "#2A2A2A",
+          borderLeftColor: isPending ? "#f39c12" : isIncome ? "#27ae60" : "#e74c3c",
         },
       ]}
       onPress={onPress}
     >
       <View style={styles.header}>
         <Text style={[styles.date, isDarkMode && { color: "#AAA" }]}>{formatDate(date)}</Text>
-        <Text 
-          style={[
-            styles.amount, 
-            isPending ? styles.pendingText : (isIncome ? styles.incomeText : styles.expenseText)
-          ]}
+        <Text
+          style={[styles.amount, isPending ? styles.pendingText : isIncome ? styles.incomeText : styles.expenseText]}
         >
           {isIncome ? "+" : "-"} {formatCurrency(amount, currency)}
           {/* Removed the (Pending) text here as requested */}
@@ -86,12 +83,7 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
 
       <View style={styles.footer}>
         <View style={styles.leftFooter}>
-          <Text 
-            style={[
-              styles.category, 
-              isDarkMode && { backgroundColor: "#444", color: "#CCC" }
-            ]}
-          >
+          <Text style={[styles.category, isDarkMode && { backgroundColor: "#444", color: "#CCC" }]}>
             {getCategoryEmoji(category)} {category}
           </Text>
           <Text style={[styles.accountName, isDarkMode && { backgroundColor: "#333", color: "#AAA" }]}>

@@ -132,7 +132,7 @@ export const categorizeTransaction = (description: string, isPending?: boolean):
   return "other"
 }
 
-// Update the calculateFinancials function to handle pending transactions
+// Update the calculateFinancials function to handle pending transactions correctly
 export const calculateFinancials = (transactions) => {
   console.log(`Calculating financials for ${transactions?.length || 0} transactions`)
 
@@ -156,10 +156,16 @@ export const calculateFinancials = (transactions) => {
       )
 
       if (isPending) {
-        // Track pending transactions separately for the total pending amount
-        pendingAmount += Math.abs(amount)
+        // Track pending transactions separately
+        if (amount < 0) {
+          // Only negative amounts (outflows) go to pending
+          pendingAmount += Math.abs(amount)
+        } else if (amount > 0) {
+          // Positive pending amounts (inflows) go to income
+          income += amount
+        }
 
-        // Categorize pending transactions
+        // Categorize pending transactions for the category totals
         let category
         if (amount > 0) {
           // For positive amounts (inflows), check if it's a refund/reversal
@@ -175,37 +181,36 @@ export const calculateFinancials = (transactions) => {
 
         // Add to the category for total calculations
         categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
-
-        // Include pending transactions in the balance calculation
+      } else {
+        // Non-pending transactions
         if (amount > 0) {
+          // Add to income
           income += amount
-        } else {
+
+          // For positive amounts (inflows), check if it's a refund/reversal
+          if (isRefundOrReversal) {
+            const category = categorizeTransaction(description, false)
+            categoryTotals[category] = (categoryTotals[category] || 0) + amount
+          } else {
+            // Add to income category if not a refund/reversal
+            categoryTotals["income"] = (categoryTotals["income"] || 0) + amount
+          }
+        } else if (amount < 0) {
+          // Add to expenses (only non-pending expenses)
           expenses += Math.abs(amount)
-        }
-      } else if (amount > 0) {
-        income += amount
 
-        // For positive amounts (inflows), check if it's a refund/reversal
-        if (isRefundOrReversal) {
+          // Categorize and add to category totals
           const category = categorizeTransaction(description, false)
-          categoryTotals[category] = (categoryTotals[category] || 0) + amount
-        } else {
-          // Add to income category if not a refund/reversal
-          categoryTotals["income"] = (categoryTotals["income"] || 0) + amount
+          categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
         }
-      } else if (amount < 0) {
-        expenses += Math.abs(amount)
-
-        // Categorize and add to category totals
-        const category = categorizeTransaction(description, false)
-        categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
       }
     })
   } else {
     console.warn("calculateFinancials received invalid transactions data:", typeof transactions)
   }
 
-  const balance = income - expenses
+  // Calculate balance: income - expenses - pendingAmount
+  const balance = income - expenses - pendingAmount
 
   console.log(
     `Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}, Balance=${balance.toFixed(2)}`,
