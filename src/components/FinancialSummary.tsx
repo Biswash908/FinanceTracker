@@ -1,9 +1,17 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
+import { MaterialIcons } from "@expo/vector-icons"
 import { useTheme } from "../context/ThemeContext"
+import AsyncStorage from "@react-native-async-storage/async-storage"
+
+// Sort options
+type SortOption = "amount_lowest" | "amount_highest" | "alphabetical_asc" | "alphabetical_desc"
+
+// Storage key for persisting sort preferences
+const CATEGORY_SORT_PREFERENCE_KEY = "expense_category_sort_preference"
 
 interface FinancialSummaryProps {
   income: number
@@ -24,52 +32,100 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
 }) => {
   const [expanded, setExpanded] = useState(true)
   const { isDarkMode } = useTheme()
+  const [dropdownVisible, setDropdownVisible] = useState(false)
+  const [sortOption, setSortOption] = useState<SortOption>("amount_highest")
+
+  // Load saved sort preference on mount
+  useEffect(() => {
+    const loadSortPreference = async () => {
+      try {
+        const savedPreference = await AsyncStorage.getItem(CATEGORY_SORT_PREFERENCE_KEY)
+        if (savedPreference) {
+          setSortOption(savedPreference as SortOption)
+        }
+      } catch (error) {
+        console.error("Error loading sort preference:", error)
+      }
+    }
+
+    loadSortPreference()
+  }, [])
+
+  // Save sort preference when it changes
+  useEffect(() => {
+    const saveSortPreference = async () => {
+      try {
+        await AsyncStorage.setItem(CATEGORY_SORT_PREFERENCE_KEY, sortOption)
+      } catch (error) {
+        console.error("Error saving sort preference:", error)
+      }
+    }
+
+    saveSortPreference()
+  }, [sortOption])
 
   // Format currency with commas
   const formatCurrency = (amount, currency = "AED") => {
     return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`
   }
 
-  // Define category order (most important first, other last)
-  const categoryOrder = [
-    "food",
-    "transport",
-    "utilities",
-    "housing",
-    "shopping",
-    "health",
-    "education",
-    "entertainment",
-    "charity",
-    "other",
-  ]
-
-  // Sort categories by the defined order
+  // Sort categories based on current sort option
   const sortedCategories = Object.entries(categoryTotals)
     .filter(([category, amount]) => amount > 0 && category.toLowerCase() !== "income")
-    .sort(([a], [b]) => {
-      const indexA = categoryOrder.indexOf(a.toLowerCase())
-      const indexB = categoryOrder.indexOf(b.toLowerCase())
-      return indexA - indexB
+    .sort(([categoryA, amountA], [categoryB, amountB]) => {
+      switch (sortOption) {
+        case "amount_lowest":
+          return amountA - amountB
+        case "amount_highest":
+          return amountB - amountA
+        case "alphabetical_asc":
+          return categoryA.localeCompare(categoryB)
+        case "alphabetical_desc":
+          return categoryB.localeCompare(categoryA)
+        default:
+          return amountB - amountA
+      }
     })
+
+  // Handle sort option selection
+  const handleSortSelect = (option: SortOption) => {
+    setSortOption(option)
+    setDropdownVisible(false)
+  }
 
   // Get category color
   const getCategoryColor = (category: string): string => {
     const categoryColors = {
-      food: "#FF5733", // Orange-red
-      transport: "#33A8FF", // Blue
-      utilities: "#33FFC1", // Teal
-      housing: "#8C33FF", // Purple
-      shopping: "#FF33A8", // Pink
-      health: "#33FF57", // Green
-      education: "#FFC133", // Yellow
-      entertainment: "#FF3333", // Red
-      charity: "#33FF33", // Bright green
-      other: "#AAAAAA", // Gray
+      food: "#FF5733",
+      transport: "#33A8FF",
+      utilities: "#33FFC1",
+      housing: "#8C33FF",
+      shopping: "#FF33A8",
+      health: "#33FF57",
+      education: "#FFC133",
+      entertainment: "#FF3333",
+      charity: "#33FF33",
+      other: "#AAAAAA",
     }
 
     return categoryColors[category.toLowerCase()] || "#AAAAAA"
   }
+
+  // Get sort option display name
+  const getSortOptionName = (option: SortOption): string => {
+    switch (option) {
+      case "amount_lowest":
+        return "Amount (Low to High)"
+      case "amount_highest":
+        return "Amount (High to Low)"
+      case "alphabetical_asc":
+        return "Alphabetical (A-Z)"
+      case "alphabetical_desc":
+        return "Alphabetical (Z-A)"
+    }
+  }
+
+  const sortOptions: SortOption[] = ["amount_lowest", "amount_highest", "alphabetical_asc", "alphabetical_desc"]
 
   return (
     <View
@@ -98,7 +154,6 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
             <Text style={[styles.value, styles.expenseText]}>-{formatCurrency(expenses, currency)}</Text>
           </View>
 
-          {/* Always show the pending line, even if amount is 0 */}
           <View style={styles.summaryRow}>
             <Text style={[styles.label, isDarkMode && { color: "#DDD" }]}>Pending:</Text>
             <Text style={[styles.value, styles.pendingText]}>-{formatCurrency(pendingAmount, currency)}</Text>
@@ -112,7 +167,44 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
             </Text>
           </View>
 
-          <Text style={[styles.sectionTitle, isDarkMode && { color: "#EEE" }]}>Expense Categories</Text>
+          <View style={styles.sectionTitleRow}>
+            <Text style={[styles.sectionTitle, isDarkMode && { color: "#EEE" }]}>Expense Categories</Text>
+            <View style={styles.sortContainer}>
+              <TouchableOpacity style={styles.sortButton} onPress={() => setDropdownVisible(!dropdownVisible)}>
+                <MaterialIcons name="sort" size={18} color={isDarkMode ? "#DDD" : "#555"} />
+              </TouchableOpacity>
+
+              {dropdownVisible && (
+                <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
+                  {sortOptions.map((option) => (
+                    <TouchableOpacity
+                      key={option}
+                      style={[
+                        styles.dropdownItem,
+                        sortOption === option && styles.selectedDropdownItem,
+                        isDarkMode && { borderBottomColor: "#444" },
+                        sortOption === option && isDarkMode && { backgroundColor: "#3a3a3a" },
+                      ]}
+                      onPress={() => handleSortSelect(option)}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownText,
+                          sortOption === option && styles.selectedDropdownText,
+                          isDarkMode && { color: "#DDD" },
+                        ]}
+                      >
+                        {getSortOptionName(option)}
+                      </Text>
+                      {sortOption === option && (
+                        <MaterialIcons name="check" size={16} color={isDarkMode ? "#3498db" : "#3498db"} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
 
           {sortedCategories.length > 0 ? (
             sortedCategories.map(([category, amount]) => (
@@ -140,6 +232,11 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
           )}
         </View>
       )}
+
+      {/* Overlay to close dropdown when clicking outside */}
+      {dropdownVisible && (
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setDropdownVisible(false)} />
+      )}
     </View>
   )
 }
@@ -147,7 +244,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
 const styles = StyleSheet.create({
   container: {
     borderRadius: 12,
-    overflow: "hidden",
+    overflow: "visible",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -156,6 +253,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#eee",
+    zIndex: 1,
   },
   header: {
     flexDirection: "row",
@@ -213,11 +311,59 @@ const styles = StyleSheet.create({
   pendingText: {
     color: "#f39c12",
   },
+  sectionTitleRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "600",
-    marginBottom: 12,
     color: "#333",
+  },
+  sortContainer: {
+    position: "relative",
+    zIndex: 10,
+  },
+  sortButton: {
+    padding: 4,
+  },
+  dropdown: {
+    position: "absolute",
+    top: 30,
+    right: 0,
+    backgroundColor: "white",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#eee",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 5,
+    minWidth: 170,
+    zIndex: 20,
+  },
+  dropdownItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  selectedDropdownItem: {
+    backgroundColor: "#f0f7ff",
+  },
+  dropdownText: {
+    fontSize: 14,
+    color: "#333",
+  },
+  selectedDropdownText: {
+    fontWeight: "600",
+    color: "#3498db",
   },
   categoryRow: {
     flexDirection: "row",
@@ -250,6 +396,14 @@ const styles = StyleSheet.create({
     fontStyle: "italic",
     textAlign: "center",
     marginTop: 10,
+  },
+  overlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 5,
   },
 })
 

@@ -1,18 +1,20 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native"
 import { ACCOUNT_ID, ENTITY_ID } from "@env"
 import { useTheme } from "../context/ThemeContext"
+import { useFocusEffect } from "@react-navigation/native"
 
 // Components
 import BalanceCard from "../components/BalanceCard"
 import CategoryChart from "../components/CategoryChart"
 
 // Services and Utils
-import { fetchTransactions } from "../services/lean-api"
+import { fetchTransactions, fetchAccounts, clearTransactionsCache } from "../services/lean-api"
 import { calculateFinancials } from "../utils/categorizer"
 import { formatCurrency } from "../utils/formatters"
+import { leanEntityService } from "../services/lean-entity-service"
 
 const DashboardScreen = () => {
   const { isDarkMode } = useTheme()
@@ -22,6 +24,67 @@ const DashboardScreen = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [timeRange, setTimeRange] = useState("month") // "week" or "month"
+  const [entityId, setEntityId] = useState<string | null>(null)
+  const [accountId, setAccountId] = useState<string | null>(ACCOUNT_ID || null)
+  const [lastRefresh, setLastRefresh] = useState(Date.now())
+
+  // Check for bank connection when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      checkBankConnection()
+    }, []),
+  )
+
+  const checkBankConnection = async () => {
+    try {
+      console.log("Checking bank connection...")
+      const storedEntityId = await leanEntityService.getEntityId()
+
+      if (storedEntityId) {
+        console.log("Found entity ID:", storedEntityId)
+        setEntityId(storedEntityId)
+        setError(null)
+
+        // If we don't have a hardcoded account ID, fetch accounts to get one
+        if (!ACCOUNT_ID) {
+          try {
+            console.log("Fetching accounts to get account ID...")
+            const accounts = await fetchAccounts()
+            if (accounts && accounts.length > 0) {
+              const firstAccountId = accounts[0].id
+              console.log("Using first available account:", firstAccountId)
+              setAccountId(firstAccountId)
+            } else {
+              setError("No accounts found. Please try reconnecting your bank account.")
+            }
+          } catch (accountError) {
+            console.error("Error fetching accounts:", accountError)
+            setError("Error fetching accounts. Please try reconnecting your bank account.")
+          }
+        } else {
+          // Use hardcoded account ID
+          setAccountId(ACCOUNT_ID)
+        }
+      } else {
+        console.log("No entity ID found")
+        setEntityId(null)
+        setAccountId(ACCOUNT_ID || null)
+        setError("No bank account connected. Please connect your bank account in Settings.")
+      }
+    } catch (err) {
+      console.error("Error checking bank connection:", err)
+      setError("Error checking bank connection status.")
+    }
+  }
+
+  // Set up periodic checking for entity ID (for when user connects bank)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      checkBankConnection()
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [])
 
   // Get date range based on selected time range
   const getDateRange = () => {
@@ -42,16 +105,28 @@ const DashboardScreen = () => {
     return { startDate, endDate }
   }
 
-  // Fetch transactions when component mounts or time range changes
+  // Fetch transactions when entity ID and account ID are available, or time range changes
   useEffect(() => {
+    if (!entityId || !accountId) {
+      console.log("Waiting for entity ID and account ID...", { entityId, accountId })
+      setLoading(false)
+      return
+    }
+
     const loadTransactions = async () => {
       try {
         setLoading(true)
         setError(null)
 
         const { startDate, endDate } = getDateRange()
-        const data = await fetchTransactions(ENTITY_ID, ACCOUNT_ID, startDate, endDate)
-        setTransactions(data)
+        console.log(`Loading transactions for account ${accountId} from ${startDate} to ${endDate}`)
+
+        // Clear cache to ensure fresh data
+        await clearTransactionsCache()
+
+        const data = await fetchTransactions(ENTITY_ID, accountId, startDate, endDate)
+        console.log(`Received ${data.transactions?.length || 0} transactions`)
+        setTransactions(data.transactions || [])
       } catch (err) {
         console.error("Error loading transactions:", err)
         setError(err.message)
@@ -61,14 +136,23 @@ const DashboardScreen = () => {
     }
 
     loadTransactions()
-  }, [timeRange])
+  }, [entityId, accountId, timeRange, lastRefresh])
 
   // Calculate financial summary
   const { income, expenses, balance, categoryTotals } = calculateFinancials(transactions || [])
 
-  // Toggle time range
-  const toggleTimeRange = () => {
-    setTimeRange(timeRange === "month" ? "week" : "month")
+  // Handle refresh
+  const handleRefresh = async () => {
+    console.log("Manual refresh triggered")
+
+    // Clear cache first
+    await clearTransactionsCache()
+
+    // Force re-check of bank connection
+    await checkBankConnection()
+
+    // Trigger data reload
+    setLastRefresh(Date.now())
   }
 
   // Format category data for chart
@@ -81,6 +165,36 @@ const DashboardScreen = () => {
     }))
     .sort((a, b) => b.amount - a.amount)
 
+  // Show connection prompt if no entity ID or account ID
+  if ((!entityId || !accountId) && !loading) {
+    return (
+      <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
+        <View style={styles.header}>
+          <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Dashboard</Text>
+          <TouchableOpacity
+            style={[styles.refreshButton, isDarkMode && { backgroundColor: "#2C5282" }]}
+            onPress={handleRefresh}
+          >
+            <Text style={styles.refreshButtonText}>Refresh</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={[styles.connectionPrompt, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+          <Text style={[styles.connectionTitle, isDarkMode && { color: "#FFF" }]}>Connect Your Bank Account</Text>
+          <Text style={[styles.connectionText, isDarkMode && { color: "#AAA" }]}>
+            To view your financial dashboard, please connect your bank account in the Settings tab.
+          </Text>
+          <TouchableOpacity
+            style={[styles.connectionButton, isDarkMode && { backgroundColor: "#2C5282" }]}
+            onPress={handleRefresh}
+          >
+            <Text style={styles.connectionButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      </ScrollView>
+    )
+  }
+
   return (
     <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
       {/* Header */}
@@ -88,9 +202,7 @@ const DashboardScreen = () => {
         <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Dashboard</Text>
         <TouchableOpacity
           style={[styles.refreshButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-          onPress={() => {
-            setTimeRange(timeRange) // Trigger a refresh
-          }}
+          onPress={handleRefresh}
         >
           <Text style={styles.refreshButtonText}>Refresh</Text>
         </TouchableOpacity>
@@ -196,7 +308,7 @@ const DashboardScreen = () => {
                         <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>{category.name}</Text>
                       </View>
                       <Text style={[styles.categoryAmount, { color: category.color }]}>
-                        {formatCurrency(category.amount, "NPR")}
+                        {formatCurrency(category.amount, "AED")}
                       </Text>
                     </View>
                   ))}
@@ -244,6 +356,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    marginTop: 26,
     marginBottom: 16,
   },
   title: {
@@ -373,6 +486,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666",
     lineHeight: 24,
+  },
+  connectionPrompt: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 24,
+    marginTop: 32,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  connectionTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 12,
+  },
+  connectionText: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: 24,
+  },
+  connectionButton: {
+    backgroundColor: "#3498db",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  connectionButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 })
 

@@ -19,6 +19,7 @@ import {
 } from "react-native"
 import { ENTITY_ID } from "@env"
 import { MaterialIcons } from "@expo/vector-icons"
+import { useFocusEffect } from "@react-navigation/native"
 
 // Components
 import TransactionCard from "../components/TransactionCard"
@@ -34,6 +35,7 @@ import { categorizeTransaction, calculateFinancials } from "../utils/categorizer
 import { StorageService } from "../services/storage-service"
 import { exportTransactionsToExcel } from "../utils/excel-export"
 import { useTheme } from "../context/ThemeContext"
+import { leanEntityService } from "../services/lean-entity-service"
 
 // Import the date utility functions
 import { formatDateToString, getFirstDayOfMonth, getCurrentDate } from "../utils/date-utils"
@@ -93,6 +95,8 @@ const TransactionsScreen = () => {
   const [loadingAllPages, setLoadingAllPages] = useState(false)
   // Add a state to track the last refresh timestamp
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null)
+  // Add entity ID state
+  const [entityId, setEntityId] = useState<string | null>(null)
 
   // Refs
   const mainScrollViewRef = useRef(null)
@@ -101,6 +105,50 @@ const TransactionsScreen = () => {
   const isLoadingAllPagesRef = useRef(false)
   const searchInputRef = useRef(null)
   const searchWidthAnim = useRef(new Animated.Value(0)).current
+
+  // Check for entity ID when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      checkBankConnection()
+    }, []),
+  )
+
+  const checkBankConnection = async () => {
+    try {
+      console.log("Checking bank connection...")
+      const storedEntityId = await leanEntityService.getEntityId()
+
+      if (storedEntityId) {
+        console.log("Found entity ID:", storedEntityId)
+        setEntityId(storedEntityId)
+        setError(null)
+
+        // Load accounts when we have entity ID
+        if (!accounts.length || accounts.length === 0) {
+          loadAccounts(storedEntityId)
+        }
+      } else {
+        console.log("No entity ID found")
+        setEntityId(null)
+        setAccounts([])
+        setSelectedAccounts([])
+        setTransactions([])
+        setError("No bank account connected. Please connect your bank account in Settings.")
+      }
+    } catch (err) {
+      console.error("Error checking bank connection:", err)
+      setError("Error checking bank connection status.")
+    }
+  }
+
+  // Set up periodic checking for entity ID (for when user connects bank)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      checkBankConnection()
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [accounts.length])
 
   // Toggle search visibility
   const toggleSearch = () => {
@@ -228,12 +276,12 @@ const TransactionsScreen = () => {
   useEffect(() => {
     // Clear old cache on app start
     StorageService.clearOldCache()
-    loadAccounts()
+    checkBankConnection()
   }, [])
 
   // Load transactions when accounts, dates, or page changes
   useEffect(() => {
-    if (selectedAccounts.length > 0) {
+    if (selectedAccounts.length > 0 && entityId) {
       console.log(`Date range changed: ${startDate} to ${endDate}, reloading transactions...`)
       // Reset the loadAttemptFailed flag when we're explicitly loading new data
       setLoadAttemptFailed(false)
@@ -254,7 +302,7 @@ const TransactionsScreen = () => {
       // Load all transactions for the selected accounts and date range
       loadAllTransactions(true)
     }
-  }, [selectedAccounts, startDate, endDate])
+  }, [selectedAccounts, startDate, endDate, entityId])
 
   // Add a function to force refresh the date range
   const forceRefreshDateRange = useCallback(() => {
@@ -312,14 +360,20 @@ const TransactionsScreen = () => {
     [startDate, endDate],
   )
 
-  // Load accounts function
-  const loadAccounts = async () => {
+  // Load accounts function - now uses dynamic entity ID
+  const loadAccounts = async (currentEntityId?: string) => {
     try {
       setAccountsLoading(true)
       setError(null)
 
+      const entityIdToUse = currentEntityId || entityId
+      if (!entityIdToUse) {
+        setError("No entity ID available. Please connect your bank account.")
+        return
+      }
+
       console.log("Loading accounts...")
-      const accountsData = await fetchAccounts(ENTITY_ID)
+      const accountsData = await fetchAccounts()
 
       console.log(`Loaded ${accountsData.length} accounts`)
       setAccounts(accountsData)
@@ -516,9 +570,13 @@ const TransactionsScreen = () => {
     setLoadAttemptFailed(false)
     // Clear the cache to ensure fresh data
     clearTransactionsCache().catch((err) => console.error("Error clearing transactions cache:", err))
+    // Re-check bank connection and reload accounts
+    checkBankConnection()
     // Load all transactions for all accounts
-    loadAllTransactions(true)
-  }, [selectedAccounts, startDate, endDate])
+    if (selectedAccounts.length > 0 && entityId) {
+      loadAllTransactions(true)
+    }
+  }, [selectedAccounts, startDate, endDate, entityId])
 
   // Handle load more - modified to load more for each account that has more transactions
   const handleLoadMore = useCallback(() => {
@@ -570,17 +628,20 @@ const TransactionsScreen = () => {
       await clearAllCache()
       Alert.alert("Success", "Cache cleared successfully")
       // Reload data
-      await loadAccounts()
+      await checkBankConnection()
       // Reset the loadAttemptFailed flag when clearing cache
       setLoadAttemptFailed(false)
-      await loadAllTransactions(true)
+      if (entityId) {
+        await loadAccounts(entityId)
+        await loadAllTransactions(true)
+      }
     } catch (error) {
       console.error("Error clearing cache:", error)
       Alert.alert("Error", "Failed to clear cache: " + error.message)
     } finally {
       setIsCacheClearing(false)
     }
-  }, [])
+  }, [entityId])
 
   // Handle export to Excel
   const handleExportToExcel = useCallback(async () => {
@@ -672,6 +733,44 @@ const TransactionsScreen = () => {
     inputRange: [0, 1],
     outputRange: ["0%", "100%"],
   })
+
+  // Show connection prompt if no entity ID
+  if (!entityId && !accountsLoading) {
+    return (
+      <SafeAreaView style={[styles.safeArea, isDarkMode && { backgroundColor: "#121212" }]}>
+        <ScrollView
+          style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}
+          contentContainerStyle={styles.contentContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={["#3498db"]}
+              progressViewOffset={10}
+              tintColor={isDarkMode ? "#3498db" : "#3498db"}
+            />
+          }
+        >
+          <View style={styles.header}>
+            <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Transactions</Text>
+          </View>
+
+          <View style={[styles.connectionPrompt, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+            <Text style={[styles.connectionTitle, isDarkMode && { color: "#FFF" }]}>Connect Your Bank Account</Text>
+            <Text style={[styles.connectionText, isDarkMode && { color: "#AAA" }]}>
+              To view your transactions, please connect your bank account in the Settings tab.
+            </Text>
+            <TouchableOpacity
+              style={[styles.connectionButton, isDarkMode && { backgroundColor: "#2C5282" }]}
+              onPress={onRefresh}
+            >
+              <Text style={styles.connectionButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    )
+  }
 
   return (
     <SafeAreaView style={[styles.safeArea, isDarkMode && { backgroundColor: "#121212" }]}>
@@ -961,6 +1060,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   header: {
+    marginTop: 26,
     marginBottom: 16,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1243,6 +1343,44 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     fontStyle: "italic",
+  },
+  connectionPrompt: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 24,
+    marginTop: 32,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  connectionTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 12,
+  },
+  connectionText: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: 24,
+  },
+  connectionButton: {
+    backgroundColor: "#3498db",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  connectionButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 })
 

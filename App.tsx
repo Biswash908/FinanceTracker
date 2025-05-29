@@ -1,39 +1,34 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { SafeAreaProvider } from "react-native-safe-area-context"
 import { NavigationContainer } from "@react-navigation/native"
 import { createStackNavigator } from "@react-navigation/stack"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
-import { SafeAreaProvider } from "react-native-safe-area-context"
-import { StatusBar } from "expo-status-bar"
 import { MaterialIcons } from "@expo/vector-icons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
-import { View, StyleSheet, ActivityIndicator, Alert } from "react-native"
+import { View, StyleSheet, ActivityIndicator, Alert, Text } from "react-native"
 
-// Import screens
+// Screens
 import DashboardScreen from "./src/screens/DashboardScreen"
 import TransactionsScreen from "./src/screens/TransactionsScreen"
 import SettingsScreen from "./src/screens/SettingsScreen"
 import LoginScreen from "./src/screens/LoginScreen"
-import OnboardingScreen from "./src/screens/OnboardingScreen"
 
-// Import components
+// Components
 import LeanWebView from "./src/components/LeanWebView"
 
-// Import context
+// Context and Services
 import { ThemeProvider } from "./src/context/ThemeContext"
-
-// Import environment variables
-import { APP_TOKEN, CUSTOMER_ID } from "@env"
-
-// Import auth service
 import { authService } from "./src/services/auth-service"
+import { leanCustomerService } from "./src/services/lean-customer-service"
+import { leanEntityService } from "./src/services/lean-entity-service"
 
 // Create navigators
 const Stack = createStackNavigator()
 const Tab = createBottomTabNavigator()
 
-// Main tab navigator
+// Main Tab Navigator
 const TabNavigator = () => {
   return (
     <Tab.Navigator
@@ -63,12 +58,11 @@ const TabNavigator = () => {
   )
 }
 
-// Main app component
+// Main App Component
 const App = () => {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [hasOnboarded, setHasOnboarded] = useState(false)
-  const [customerId, setCustomerId] = useState(CUSTOMER_ID || null)
+  const [customerId, setCustomerId] = useState(null)
   const [showLeanWeb, setShowLeanWeb] = useState(false)
   const [authInitialized, setAuthInitialized] = useState(false)
 
@@ -94,22 +88,20 @@ const App = () => {
     const checkLoginStatus = async () => {
       try {
         const userToken = await AsyncStorage.getItem("userToken")
-        const onboardingComplete = await AsyncStorage.getItem("onboardingComplete")
         const storedCustomerId = await AsyncStorage.getItem("customerId")
 
         if (storedCustomerId) {
           setCustomerId(storedCustomerId)
-        } else if (CUSTOMER_ID) {
-          await AsyncStorage.setItem("customerId", CUSTOMER_ID)
-          setCustomerId(CUSTOMER_ID)
         }
 
         setIsLoggedIn(userToken !== null)
-        setHasOnboarded(onboardingComplete === "true")
       } catch (error) {
         console.error("Error checking login status:", error)
       } finally {
-        setIsLoading(false)
+        // Add splash screen delay
+        setTimeout(() => {
+          setIsLoading(false)
+        }, 1500)
       }
     }
 
@@ -151,8 +143,8 @@ const App = () => {
     try {
       await AsyncStorage.setItem("userToken", token)
 
-      // Use the provided CUSTOMER_ID or generate one
-      const custId = CUSTOMER_ID || `customer_${userId}_${Date.now()}`
+      // Generate a customer ID if needed
+      const custId = `customer_${userId}_${Date.now()}`
       await AsyncStorage.setItem("customerId", custId)
       setCustomerId(custId)
 
@@ -162,30 +154,31 @@ const App = () => {
     }
   }
 
-  // Handle logout
+  // Handle logout - Fixed to properly update state
   const handleLogout = async () => {
     try {
+      console.log("Logging out...")
+
+      // Clear all auth-related data
       await AsyncStorage.removeItem("userToken")
+
+      // Clear all Lean-related data
+      await authService.logout()
+      await leanCustomerService.clearCustomerData()
+      await leanEntityService.clearEntityData()
+
+      // Update state AFTER async operations complete
       setIsLoggedIn(false)
-      // Also clear auth service token
-      authService.logout()
+
+      console.log("Logout complete, isLoggedIn set to false")
     } catch (error) {
       console.error("Error during logout:", error)
-    }
-  }
-
-  // Complete onboarding
-  const completeOnboarding = async () => {
-    try {
-      await AsyncStorage.setItem("onboardingComplete", "true")
-      setHasOnboarded(true)
-    } catch (error) {
-      console.error("Error completing onboarding:", error)
+      Alert.alert("Logout Error", "Failed to log out properly. Please try again.")
     }
   }
 
   // Handle Lean WebView close
-  const handleLeanWebViewClose = (status, message) => {
+  const handleLeanWebViewClose = (status, message, entityId) => {
     setShowLeanWeb(false)
 
     if (status === "SUCCESS") {
@@ -197,14 +190,15 @@ const App = () => {
       Alert.alert("Error", message || "Error connecting bank account")
     } else if (status === "CANCELLED") {
       // Handle cancellation
-      Alert.alert("Cancelled", message || "Bank connection was cancelled")
+      console.log("Bank connection was cancelled")
     }
   }
 
   if (isLoading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#3498db" />
+      <View style={styles.splashContainer}>
+        <Text style={styles.splashTitle}>Finance Tracker</Text>
+        <ActivityIndicator size="large" color="#ffffff" style={styles.splashLoader} />
       </View>
     )
   }
@@ -213,13 +207,8 @@ const App = () => {
     <SafeAreaProvider>
       <ThemeProvider>
         <NavigationContainer>
-          <StatusBar style="auto" />
           <Stack.Navigator screenOptions={{ headerShown: false }}>
-            {!hasOnboarded ? (
-              <Stack.Screen name="Onboarding">
-                {(props) => <OnboardingScreen {...props} onComplete={completeOnboarding} />}
-              </Stack.Screen>
-            ) : !isLoggedIn ? (
+            {!isLoggedIn ? (
               <Stack.Screen name="Login">{(props) => <LoginScreen {...props} onLogin={handleLogin} />}</Stack.Screen>
             ) : (
               <Stack.Screen name="Main">
@@ -227,9 +216,7 @@ const App = () => {
                   <>
                     <TabNavigator {...props} />
                     {/* Show Lean WebView when triggered */}
-                    {showLeanWeb && (
-                      <LeanWebView customerId={customerId} appToken={APP_TOKEN} onClose={handleLeanWebViewClose} />
-                    )}
+                    {showLeanWeb && <LeanWebView onClose={handleLeanWebViewClose} />}
                   </>
                 )}
               </Stack.Screen>
@@ -242,11 +229,20 @@ const App = () => {
 }
 
 const styles = StyleSheet.create({
-  loadingContainer: {
+  splashContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
+    backgroundColor: "#3498db",
+  },
+  splashTitle: {
+    fontSize: 32,
+    fontWeight: "bold",
+    color: "#fff",
+    marginBottom: 20,
+  },
+  splashLoader: {
+    marginTop: 20,
   },
 })
 

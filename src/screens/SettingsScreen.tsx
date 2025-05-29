@@ -6,6 +6,10 @@ import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, Alert, Ac
 import { useTheme } from "../context/ThemeContext"
 import { MaterialIcons } from "@expo/vector-icons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
+import { leanEntityService } from "../services/lean-entity-service"
+import LeanWebView from "../components/LeanWebView"
+import { authService } from "../services/auth-service"
+import { leanCustomerService } from "../services/lean-customer-service"
 
 const SettingsScreen = () => {
   const { isDarkMode, toggleTheme } = useTheme()
@@ -17,52 +21,113 @@ const SettingsScreen = () => {
   const [currency, setCurrency] = useState("AED")
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [customerId, setCustomerId] = useState(null)
+  const [bankConnected, setBankConnected] = useState(false)
+  const [entityId, setEntityId] = useState<string | null>(null)
 
-  // Load customer ID on mount
+  // State for LeanWebView
+  const [showLeanWebView, setShowLeanWebView] = useState(false)
+
+  // Load settings on mount
   useEffect(() => {
-    const loadCustomerId = async () => {
+    const loadSettings = async () => {
       try {
         const storedCustomerId = await AsyncStorage.getItem("customerId")
+        const bankConnectionStatus = await AsyncStorage.getItem("bankConnected")
+        const storedEntityId = await leanEntityService.getEntityId()
+
         if (storedCustomerId) {
           setCustomerId(storedCustomerId)
         }
+
+        // Check if we have a valid entity ID
+        if (storedEntityId) {
+          setEntityId(storedEntityId)
+          setBankConnected(true)
+          // Update the bankConnected flag in AsyncStorage if it's not set
+          if (bankConnectionStatus !== "true") {
+            await AsyncStorage.setItem("bankConnected", "true")
+          }
+        } else if (bankConnectionStatus === "true") {
+          setBankConnected(true)
+        } else {
+          setBankConnected(false)
+        }
       } catch (error) {
-        console.error("Error loading customer ID:", error)
+        console.error("Error loading settings:", error)
       }
     }
 
-    loadCustomerId()
+    loadSettings()
   }, [])
 
   // Connect bank account
-const connectBankAccount = async () => {
-  try {
-    // Store a flag to trigger the Lean WebView in App.tsx
-    await AsyncStorage.setItem("triggerLeanConnect", "true")
-    
-    // Show a message to the user
-    Alert.alert("Connect Bank Account", "Opening bank connection interface...", [{ text: "OK" }])
-  } catch (error) {
-    console.error("Error triggering bank connection:", error)
-    Alert.alert("Error", "Failed to initiate bank connection. Please try again.")
+  const connectBankAccount = async () => {
+    setShowLeanWebView(true)
   }
-}
 
-  // Connect bank account - this will be called from the UI
-  const handleConnectBank = () => {
-    // This function should trigger the Lean SDK connection
-    // The actual implementation will be in App.tsx with the Lean SDK ref
-    Alert.alert("Connect Bank Account", "This will open the Lean SDK to connect your bank account.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Connect",
-        onPress: async () => {
-          // We'll store a flag to trigger the Lean SDK in App.tsx
-          await AsyncStorage.setItem("triggerLeanConnect", "true")
-          // This will be picked up by App.tsx to trigger the Lean SDK
+  // Handle Lean WebView close
+  const handleLeanWebViewClose = async (status: string, message?: string, receivedEntityId?: string) => {
+    setShowLeanWebView(false)
+
+    if (status === "SUCCESS") {
+      // Handle successful connection
+      await AsyncStorage.setItem("bankConnected", "true")
+      setBankConnected(true)
+
+      if (receivedEntityId) {
+        setEntityId(receivedEntityId)
+        Alert.alert("Success", message || "Bank account connected successfully! Your data is now available.")
+      } else {
+        Alert.alert("Success", message || "Bank account connected successfully!")
+      }
+
+      // Refresh the settings to show updated status
+      const storedEntityId = await leanEntityService.getEntityId()
+      if (storedEntityId) {
+        setEntityId(storedEntityId)
+      }
+    } else if (status === "ERROR") {
+      Alert.alert("Error", message || "Error connecting bank account")
+    } else if (status === "CANCELLED") {
+      // Handle cancellation - no alert needed for user cancellation
+      console.log("Bank connection cancelled by user")
+    }
+  }
+
+  // Disconnect bank account
+  const disconnectBankAccount = async () => {
+    Alert.alert(
+      "Disconnect Bank Account",
+      "Are you sure you want to disconnect your bank account? This will remove all your financial data from the app.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsLoading(true)
+
+              // Clear all bank-related data
+              await leanEntityService.clearEntityData()
+              await AsyncStorage.multiRemove(["bankConnected", "customerId"])
+
+              // Reset state
+              setBankConnected(false)
+              setEntityId(null)
+              setCustomerId(null)
+
+              Alert.alert("Success", "Bank account disconnected successfully")
+            } catch (error) {
+              console.error("Error disconnecting bank:", error)
+              Alert.alert("Error", "Failed to disconnect bank account")
+            } finally {
+              setIsLoading(false)
+            }
+          },
         },
-      },
-    ])
+      ],
+    )
   }
 
   const handleLogout = async () => {
@@ -73,11 +138,24 @@ const connectBankAccount = async () => {
         onPress: async () => {
           setIsLoading(true)
           try {
-            // Simulate API call
-            await new Promise((resolve) => setTimeout(resolve, 1000))
-            await AsyncStorage.removeItem("userToken")
-            // Force app reload or navigation reset
-            // This will be handled by the auth state in App.tsx
+            console.log("Starting logout process...")
+
+            // Clear all auth-related data
+            await AsyncStorage.multiRemove(["userToken", "bankConnected", "customerId"])
+
+            // Clear all Lean-related data
+            await leanEntityService.clearEntityData()
+            await leanCustomerService.clearCustomerData()
+            await authService.logout()
+
+            console.log("All data cleared, logout complete")
+
+            // Force app to restart by reloading
+            // This is a workaround to ensure the app navigates back to login
+            setTimeout(() => {
+              // This will cause the app to re-check authentication
+              global.location?.reload?.() || require("react-native").DevSettings?.reload?.()
+            }, 100)
           } catch (error) {
             console.error("Logout error:", error)
             Alert.alert("Error", "Failed to logout. Please try again.")
@@ -87,6 +165,11 @@ const connectBankAccount = async () => {
         },
       },
     ])
+  }
+
+  // Temporarily disabled dark mode toggle
+  const handleDarkModeToggle = () => {
+
   }
 
   const renderSettingItem = (
@@ -112,14 +195,36 @@ const connectBankAccount = async () => {
     </TouchableOpacity>
   )
 
-  const renderButtonSetting = (title: string, onPress: () => void, buttonText: string, description?: string) => (
+  const renderBankConnectionSetting = () => (
     <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
-      <View style={styles.settingTextContainer}>
-        <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>{title}</Text>
-        {description && <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>{description}</Text>}
+      <View style={[styles.settingIcon, isDarkMode && { backgroundColor: "#333" }]}>
+        <MaterialIcons
+          name={bankConnected ? "account-balance" : "account-balance-wallet"}
+          size={24}
+          color={bankConnected ? "#27ae60" : "#3498db"}
+        />
       </View>
-      <TouchableOpacity style={styles.connectButton} onPress={onPress}>
-        <Text style={styles.connectButtonText}>{buttonText}</Text>
+      <View style={styles.settingTextContainer}>
+        <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>Bank Account</Text>
+        <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>
+          {bankConnected ? "Connected and syncing data" : "Link your bank account to track transactions"}
+        </Text>
+        {entityId && <Text style={[styles.entityIdText, isDarkMode && { color: "#888" }]}>Entity ID: {entityId}</Text>}
+      </View>
+      <TouchableOpacity
+        style={[
+          styles.connectButton,
+          bankConnected
+            ? isDarkMode
+              ? { backgroundColor: "#8B0000" }
+              : styles.disconnectButton
+            : isDarkMode
+              ? { backgroundColor: "#2C5282" }
+              : styles.connectButton,
+        ]}
+        onPress={bankConnected ? disconnectBankAccount : connectBankAccount}
+      >
+        <Text style={styles.connectButtonText}>{bankConnected ? "Disconnect" : "Connect"}</Text>
       </TouchableOpacity>
     </View>
   )
@@ -128,7 +233,9 @@ const connectBankAccount = async () => {
     return (
       <View style={[styles.loadingContainer, isDarkMode && { backgroundColor: "#121212" }]}>
         <ActivityIndicator size="large" color="#3498db" />
-        <Text style={[styles.loadingText, isDarkMode && { color: "#AAA" }]}>Logging out...</Text>
+        <Text style={[styles.loadingText, isDarkMode && { color: "#AAA" }]}>
+          {bankConnected ? "Disconnecting..." : "Logging out..."}
+        </Text>
       </View>
     )
   }
@@ -164,15 +271,13 @@ const connectBankAccount = async () => {
       <View style={[styles.section, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
         <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Banking</Text>
 
-        {renderButtonSetting(
-          "Connect Bank Account",
-          connectBankAccount,
-          "Connect",
-          "Link your bank account to track transactions",
-        )}
+        {renderBankConnectionSetting()}
 
         {customerId && (
           <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
+            <View style={[styles.settingIcon, isDarkMode && { backgroundColor: "#333" }]}>
+              <MaterialIcons name="fingerprint" size={24} color={isDarkMode ? "#3498db" : "#3498db"} />
+            </View>
             <View style={styles.settingTextContainer}>
               <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>Customer ID</Text>
               <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>{customerId}</Text>
@@ -189,10 +294,11 @@ const connectBankAccount = async () => {
           "Dark Mode",
           "Toggle dark mode on or off",
           <Switch
-            value={isDarkMode}
-            onValueChange={() => {}} //{toggleTheme}
+            value={false}
+            onValueChange={handleDarkModeToggle}
             trackColor={{ false: "#767577", true: "#81b0ff" }}
-            thumbColor={isDarkMode ? "#3498db" : "#f4f3f4"}
+            thumbColor="#f4f3f4"
+            disabled={true}
           />,
           undefined,
         )}
@@ -263,6 +369,9 @@ const connectBankAccount = async () => {
       <View style={styles.versionContainer}>
         <Text style={[styles.versionText, isDarkMode && { color: "#666" }]}>Version 1.0.0</Text>
       </View>
+
+      {/* Lean WebView Modal */}
+      {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
     </ScrollView>
   )
 }
@@ -285,7 +394,7 @@ const styles = StyleSheet.create({
   },
   header: {
     padding: 16,
-    paddingTop: 60,
+    paddingTop: 30,
     marginBottom: 16,
   },
   title: {
@@ -372,6 +481,9 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
   },
+  disconnectButton: {
+    backgroundColor: "#e74c3c",
+  },
   connectButtonText: {
     color: "#fff",
     fontSize: 14,
@@ -379,6 +491,12 @@ const styles = StyleSheet.create({
   },
   settingTextContainer: {
     flex: 1,
+  },
+  entityIdText: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 4,
+    fontFamily: "monospace",
   },
 })
 

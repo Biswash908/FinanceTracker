@@ -1,10 +1,11 @@
-import { authService } from "./auth-service"
+import { leanEntityService } from "./lean-entity-service"
 import { StorageService } from "./storage-service"
+import { authService } from "./auth-service"
 
 // Constants
 const API_BASE_URL = "https://sandbox.leantech.me"
 const MAX_RETRY_ATTEMPTS = 3
-const RETRY_DELAY_MS = 1000 // Start with 1 second delay
+const RETRY_DELAY_MS = 1000
 
 /**
  * Debug function to log API requests and responses
@@ -22,37 +23,42 @@ const logApiCall = (name: string, request: any, response?: any) => {
 }
 
 /**
- * Fetches all available accounts for an entity with caching
- *
- * @param entityId The entity ID
- * @returns Promise with accounts data
+ * Get the current entity ID from storage
  */
-export const fetchAccounts = async (entityId: string): Promise<any[]> => {
+async function getStoredEntityId(): Promise<string> {
+  const entityId = await leanEntityService.getEntityId()
+  if (!entityId) {
+    throw new Error("No entity ID found. Please connect your bank account first.")
+  }
+  return entityId
+}
+
+/**
+ * Fetches all available accounts for the current entity
+ */
+export const fetchAccounts = async (): Promise<any[]> => {
   try {
     // Check cache first
     const cachedData = await StorageService.getCachedAccounts()
     if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 3600000)) {
-      // 1 hour cache
       console.log("Using cached accounts data")
       return cachedData.accounts
     }
 
+    // Get the stored entity ID
+    const entityId = await getStoredEntityId()
     console.log(`Fetching accounts for entity: ${entityId}`)
 
     // Get a valid token from the auth service
     const token = await authService.getToken()
 
-    // Use the accounts API endpoint
-    const url = `${API_BASE_URL}/data/v1/accounts`
-
     const requestBody = {
       entity_id: entityId,
     }
 
-    // Log the request for debugging
     logApiCall("fetchAccounts", requestBody)
 
-    const response = await fetchWithRetry(url, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/accounts`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -62,10 +68,8 @@ export const fetchAccounts = async (entityId: string): Promise<any[]> => {
       body: JSON.stringify(requestBody),
     })
 
-    // Get response as text first for debugging
     const responseText = await response.text()
     logApiCall("fetchAccounts Response", requestBody, responseText)
-    console.log("Accounts response text preview:", responseText.substring(0, 200) + "...")
 
     let data
     try {
@@ -76,16 +80,13 @@ export const fetchAccounts = async (entityId: string): Promise<any[]> => {
     }
 
     if (data.payload && data.payload.accounts) {
-      // Make sure we're returning the accounts with the correct ID field
       const accounts =
         data.payload.accounts.map((account) => ({
           ...account,
-          id: account.account_id, // Ensure each account has an 'id' property that matches account_id
+          id: account.account_id,
         })) || []
 
-      // Cache the accounts data
       await StorageService.saveAccounts(accounts)
-
       return accounts
     } else {
       console.error("API Error:", data)
@@ -94,7 +95,6 @@ export const fetchAccounts = async (entityId: string): Promise<any[]> => {
   } catch (err) {
     console.error("Fetch accounts error:", err)
 
-    // If we have cached data, return it even if it's expired
     const cachedData = await StorageService.getCachedAccounts()
     if (cachedData) {
       console.log("Using expired cached accounts data due to fetch error")
@@ -106,255 +106,12 @@ export const fetchAccounts = async (entityId: string): Promise<any[]> => {
 }
 
 /**
- * Fetches transactions for multiple accounts with pagination support and caching
- *
- * @param entityId The entity ID
- * @param accountIds Array of account IDs to fetch transactions for
- * @param startDate Start date in YYYY-MM-DD format
- * @param endDate End date in YYYY-MM-DD format
- * @param page Page number (1-based)
- * @param pageSize Number of transactions per page
- * @returns Promise with transaction data
- */
-export const fetchTransactionsMultiAccount = async (
-  entityId: string,
-  accountIds: string[],
-  startDate: string,
-  endDate: string,
-  page = 1,
-  pageSize = 50,
-): Promise<{
-  transactions: any[]
-  totalCount: number
-  hasMore: boolean
-}> => {
-  try {
-    // If no account IDs provided, return empty result
-    if (!accountIds || accountIds.length === 0) {
-      return {
-        transactions: [],
-        totalCount: 0,
-        hasMore: false,
-      }
-    }
-
-    // Log API request details for debugging
-    console.log(`API Request - fetchTransactionsMultiAccount:
-      entityId: ${entityId}
-      accountIds: ${accountIds.join(", ")}
-      startDate: ${startDate} (${typeof startDate})
-      endDate: ${endDate} (${typeof endDate})
-      page: ${page}
-      pageSize: ${pageSize}
-    `)
-
-    // For first page, check cache
-    if (page === 1) {
-      const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
-      if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 3600000)) {
-        // 1 hour cache
-        console.log("Using cached transactions data")
-
-        // Apply pagination to cached data
-        const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
-
-        return {
-          transactions: paginatedTransactions,
-          totalCount: cachedData.transactions.length,
-          hasMore: cachedData.transactions.length > pageSize,
-        }
-      }
-    }
-
-    // Get a valid token from the auth service
-    const token = await authService.getToken()
-
-    // Calculate pagination parameters
-    const offset = (page - 1) * pageSize
-
-    // Use the correct API URL
-    const url = `${API_BASE_URL}/data/v1/transactions`
-
-    console.log(`Fetching transactions for ${accountIds.length} accounts: page ${page}, size ${pageSize}`)
-    console.log(`Date range: ${startDate} to ${endDate}`)
-
-    // Fetch transactions for each account and combine them
-    const allTransactions = []
-    let hasMoreResults = false
-
-    // Use a queue system to avoid rate limiting
-    for (let i = 0; i < accountIds.length; i++) {
-      const accountId = accountIds[i]
-
-      // Add a small delay between requests to avoid rate limiting
-      if (i > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-
-      // Create the request body with pagination parameters
-      const requestBody = {
-        entity_id: entityId,
-        account_id: accountId,
-        from_date: startDate,
-        to_date: endDate,
-        limit: pageSize,
-        offset: offset,
-      }
-
-      console.log(`Fetching for account ${accountId}, ID type: ${typeof accountId}`)
-
-      // Log the request for debugging
-      logApiCall(`fetchTransactionsMultiAccount (account ${accountId})`, requestBody)
-
-      try {
-        const response = await fetchWithRetry(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            Scope: "api",
-          },
-          body: JSON.stringify(requestBody),
-        })
-
-        const responseText = await response.text()
-        logApiCall(`fetchTransactionsMultiAccount Response (account ${accountId})`, requestBody, responseText)
-
-        let data
-        try {
-          data = JSON.parse(responseText)
-        } catch (e) {
-          console.warn(`Failed to parse JSON for account ${accountId}:`, e)
-          continue // Skip this account and try the next one
-        }
-
-        if (data.payload && Array.isArray(data.payload.transactions)) {
-          // Log transaction dates for debugging
-          if (data.payload.transactions.length > 0) {
-            const firstTx = data.payload.transactions[0]
-            const lastTx = data.payload.transactions[data.payload.transactions.length - 1]
-            console.log(`Account ${accountId} - First transaction date: ${firstTx.timestamp || firstTx.date}`)
-            console.log(`Account ${accountId} - Last transaction date: ${lastTx.timestamp || lastTx.date}`)
-          }
-
-          // Add account_id and a unique ID to each transaction
-          const accountTransactions = data.payload.transactions.map((transaction, index) => ({
-            ...transaction,
-            account_id: accountId,
-            // Ensure each transaction has a unique ID by combining account_id and transaction_id
-            id:
-              transaction.id ||
-              `${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
-          }))
-
-          allTransactions.push(...accountTransactions)
-
-          // If any account has more results, set hasMore to true
-          if (data.payload.transactions.length >= pageSize) {
-            hasMoreResults = true
-          }
-        } else {
-          console.warn(`No transactions found for account ${accountId} or invalid format`)
-        }
-      } catch (error) {
-        console.warn(`Error fetching transactions for account ${accountId}:`, error)
-        // Continue with other accounts even if one fails
-      }
-    }
-
-    // Sort all transactions by date (newest first)
-    allTransactions.sort((a, b) => {
-      const dateA = new Date(a.timestamp || a.date || 0)
-      const dateB = new Date(b.timestamp || b.date || 0)
-      return dateB.getTime() - dateA.getTime()
-    })
-
-    // Filter transactions by date client-side since the API doesn't seem to respect the date range
-    console.log(`Filtering multi-account transactions by date range: ${startDate} to ${endDate}`)
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
-    if (dateRegex.test(startDate) && dateRegex.test(endDate)) {
-      const startDateObj = new Date(startDate)
-      const endDateObj = new Date(endDate)
-      startDateObj.setHours(0, 0, 0, 0)
-      endDateObj.setHours(23, 59, 59, 999)
-
-      const filteredTransactions = allTransactions.filter((tx) => {
-        const txDate = new Date(tx.timestamp || tx.date || 0)
-        return txDate >= startDateObj && txDate <= endDateObj
-      })
-
-      console.log(
-        `Filtered from ${allTransactions.length} to ${filteredTransactions.length} transactions based on date range`,
-      )
-
-      // Apply pagination to the filtered results
-      const paginatedTransactions = filteredTransactions.slice(0, pageSize)
-
-      // Cache the filtered results for first page
-      if (page === 1) {
-        await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, filteredTransactions)
-      }
-
-      return {
-        transactions: paginatedTransactions,
-        totalCount: filteredTransactions.length,
-        hasMore: filteredTransactions.length > pageSize,
-      }
-    }
-
-    // Apply pagination to the combined results
-    const paginatedTransactions = allTransactions.slice(0, pageSize)
-
-    // Cache the full results for first page
-    if (page === 1) {
-      await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, allTransactions)
-    }
-
-    console.log(`Returning ${paginatedTransactions.length} transactions, hasMore: ${hasMoreResults}`)
-
-    return {
-      transactions: paginatedTransactions,
-      totalCount: allTransactions.length,
-      hasMore: hasMoreResults,
-    }
-  } catch (err) {
-    console.error("Fetch transactions error:", err)
-
-    // If we have cached data, return it even if it's expired
-    if (page === 1) {
-      const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
-      if (cachedData) {
-        console.log("Using expired cached transactions data due to fetch error")
-
-        // Apply pagination to cached data
-        const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
-
-        return {
-          transactions: paginatedTransactions,
-          totalCount: cachedData.transactions.length,
-          hasMore: cachedData.transactions.length > pageSize,
-        }
-      }
-    }
-
-    throw err
-  }
-}
-
-/**
- * Fetches transactions with pagination support (single account)
- *
- * @param entityId The entity ID
- * @param accountId The account ID
- * @param startDate Start date in YYYY-MM-DD format
- * @param endDate End date in YYYY-MM-DD format
- * @param page Page number (1-based)
- * @param pageSize Number of transactions per page
- * @returns Promise with transaction data
+ * Fetches transactions for a single account (original dashboard interface)
+ * This maintains compatibility with the original dashboard code
  */
 export const fetchTransactions = async (
-  entityId: string,
-  accountId: string,
+  entityIdOrAccountId: string, // This will be ENTITY_ID from the original code
+  accountId: string, // This will be ACCOUNT_ID from the original code
   startDate: string,
   endDate: string,
   page = 1,
@@ -365,12 +122,14 @@ export const fetchTransactions = async (
   hasMore: boolean
 }> => {
   try {
-    // Log API request details for debugging
+    // Get the actual entity ID from storage (ignore the passed entityId parameter)
+    const entityId = await getStoredEntityId()
+
     console.log(`API Request - fetchTransactions:
-      entityId: ${entityId}
+      entityId: ${entityId} (from storage)
       accountId: ${accountId}
-      startDate: ${startDate} (${typeof startDate})
-      endDate: ${endDate} (${typeof endDate})
+      startDate: ${startDate}
+      endDate: ${endDate}
       page: ${page}
       pageSize: ${pageSize}
     `)
@@ -379,12 +138,8 @@ export const fetchTransactions = async (
     if (page === 1) {
       const cachedData = await StorageService.getCachedTransactions(entityId, [accountId], startDate, endDate)
       if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 3600000)) {
-        // 1 hour cache
         console.log("Using cached transactions data for single account")
-
-        // Apply pagination to cached data
         const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
-
         return {
           transactions: paginatedTransactions,
           totalCount: cachedData.transactions.length,
@@ -393,18 +148,9 @@ export const fetchTransactions = async (
       }
     }
 
-    // Get a valid token from the auth service
     const token = await authService.getToken()
-
-    // Calculate pagination parameters
     const offset = (page - 1) * pageSize
 
-    // Use the correct API URL
-    const url = `${API_BASE_URL}/data/v1/transactions`
-
-    console.log(`Fetching transactions: page ${page}, size ${pageSize}, from ${startDate} to ${endDate}`)
-
-    // Create the request body with pagination parameters
     const requestBody = {
       entity_id: entityId,
       account_id: accountId,
@@ -415,11 +161,9 @@ export const fetchTransactions = async (
     }
 
     console.log("Request body:", JSON.stringify(requestBody))
-
-    // Log the request for debugging
     logApiCall("fetchTransactions", requestBody)
 
-    const response = await fetchWithRetry(url, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/transactions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -429,10 +173,8 @@ export const fetchTransactions = async (
       body: JSON.stringify(requestBody),
     })
 
-    // Get response as text first for debugging
     const responseText = await response.text()
     logApiCall("fetchTransactions Response", requestBody, responseText)
-    console.log("Response text preview:", responseText.substring(0, 200) + "...")
 
     let data
     try {
@@ -446,15 +188,6 @@ export const fetchTransactions = async (
       const totalCount = data.payload.total_count || data.payload.transactions.length
       const hasMore = data.payload.transactions.length >= pageSize
 
-      // Log transaction dates for debugging
-      if (data.payload.transactions.length > 0) {
-        const firstTx = data.payload.transactions[0]
-        const lastTx = data.payload.transactions[data.payload.transactions.length - 1]
-        console.log(`First transaction date: ${firstTx.timestamp || firstTx.date}`)
-        console.log(`Last transaction date: ${lastTx.timestamp || lastTx.date}`)
-      }
-
-      // Add unique IDs to each transaction
       const transactions = data.payload.transactions.map((transaction, index) => ({
         ...transaction,
         account_id: accountId,
@@ -463,8 +196,7 @@ export const fetchTransactions = async (
           `${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
       }))
 
-      // Filter transactions by date client-side since the API doesn't seem to respect the date range
-      console.log(`Filtering transactions by date range: ${startDate} to ${endDate}`)
+      // Filter transactions by date client-side
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/
       if (dateRegex.test(startDate) && dateRegex.test(endDate)) {
         const startDateObj = new Date(startDate)
@@ -481,22 +213,17 @@ export const fetchTransactions = async (
           `Filtered from ${transactions.length} to ${filteredTransactions.length} transactions based on date range`,
         )
 
-        // Cache the filtered results for first page
         if (page === 1) {
           await StorageService.cacheTransactions(entityId, [accountId], startDate, endDate, filteredTransactions)
         }
 
-        // Adjust hasMore based on filtered results
-        const hasMoreFiltered = filteredTransactions.length >= pageSize
-
         return {
           transactions: filteredTransactions || [],
           totalCount: filteredTransactions.length,
-          hasMore: hasMoreFiltered,
+          hasMore: filteredTransactions.length >= pageSize,
         }
       }
 
-      // Cache the results for first page
       if (page === 1) {
         await StorageService.cacheTransactions(entityId, [accountId], startDate, endDate, transactions)
       }
@@ -519,19 +246,209 @@ export const fetchTransactions = async (
   } catch (err) {
     console.error("Fetch error:", err)
 
-    // If we have cached data, return it even if it's expired
     if (page === 1) {
-      const cachedData = await StorageService.getCachedTransactions(entityId, [accountId], startDate, endDate)
-      if (cachedData) {
-        console.log("Using expired cached transactions data due to fetch error")
+      const entityId = await leanEntityService.getEntityId()
+      if (entityId) {
+        const cachedData = await StorageService.getCachedTransactions(entityId, [accountId], startDate, endDate)
+        if (cachedData) {
+          console.log("Using expired cached transactions data due to fetch error")
+          const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
+          return {
+            transactions: paginatedTransactions,
+            totalCount: cachedData.transactions.length,
+            hasMore: cachedData.transactions.length > pageSize,
+          }
+        }
+      }
+    }
 
-        // Apply pagination to cached data
+    throw err
+  }
+}
+
+/**
+ * Fetches transactions for multiple accounts
+ */
+export const fetchTransactionsMultiAccount = async (
+  accountIds: string[],
+  startDate: string,
+  endDate: string,
+  page = 1,
+  pageSize = 50,
+): Promise<{
+  transactions: any[]
+  totalCount: number
+  hasMore: boolean
+}> => {
+  try {
+    if (!accountIds || accountIds.length === 0) {
+      return {
+        transactions: [],
+        totalCount: 0,
+        hasMore: false,
+      }
+    }
+
+    // Get the stored entity ID
+    const entityId = await getStoredEntityId()
+
+    console.log(`API Request - fetchTransactionsMultiAccount:
+      entityId: ${entityId}
+      accountIds: ${accountIds.join(", ")}
+      startDate: ${startDate}
+      endDate: ${endDate}
+      page: ${page}
+      pageSize: ${pageSize}
+    `)
+
+    // For first page, check cache
+    if (page === 1) {
+      const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
+      if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 3600000)) {
+        console.log("Using cached transactions data")
         const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
-
         return {
           transactions: paginatedTransactions,
           totalCount: cachedData.transactions.length,
           hasMore: cachedData.transactions.length > pageSize,
+        }
+      }
+    }
+
+    const token = await authService.getToken()
+    const offset = (page - 1) * pageSize
+    const allTransactions = []
+    let hasMoreResults = false
+
+    // Fetch transactions for each account
+    for (let i = 0; i < accountIds.length; i++) {
+      const accountId = accountIds[i]
+
+      if (i > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+
+      const requestBody = {
+        entity_id: entityId,
+        account_id: accountId,
+        from_date: startDate,
+        to_date: endDate,
+        limit: pageSize,
+        offset: offset,
+      }
+
+      console.log(`Fetching for account ${accountId}`)
+      logApiCall(`fetchTransactionsMultiAccount (account ${accountId})`, requestBody)
+
+      try {
+        const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/transactions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Scope: "api",
+          },
+          body: JSON.stringify(requestBody),
+        })
+
+        const responseText = await response.text()
+        logApiCall(`fetchTransactionsMultiAccount Response (account ${accountId})`, requestBody, responseText)
+
+        let data
+        try {
+          data = JSON.parse(responseText)
+        } catch (e) {
+          console.warn(`Failed to parse JSON for account ${accountId}:`, e)
+          continue
+        }
+
+        if (data.payload && Array.isArray(data.payload.transactions)) {
+          const accountTransactions = data.payload.transactions.map((transaction, index) => ({
+            ...transaction,
+            account_id: accountId,
+            id:
+              transaction.id ||
+              `${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+          }))
+
+          allTransactions.push(...accountTransactions)
+
+          if (data.payload.transactions.length >= pageSize) {
+            hasMoreResults = true
+          }
+        } else {
+          console.warn(`No transactions found for account ${accountId} or invalid format`)
+        }
+      } catch (error) {
+        console.warn(`Error fetching transactions for account ${accountId}:`, error)
+      }
+    }
+
+    // Sort all transactions by date (newest first)
+    allTransactions.sort((a, b) => {
+      const dateA = new Date(a.timestamp || a.date || 0)
+      const dateB = new Date(b.timestamp || b.date || 0)
+      return dateB.getTime() - dateA.getTime()
+    })
+
+    // Filter transactions by date client-side
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+    if (dateRegex.test(startDate) && dateRegex.test(endDate)) {
+      const startDateObj = new Date(startDate)
+      const endDateObj = new Date(endDate)
+      startDateObj.setHours(0, 0, 0, 0)
+      endDateObj.setHours(23, 59, 59, 999)
+
+      const filteredTransactions = allTransactions.filter((tx) => {
+        const txDate = new Date(tx.timestamp || tx.date || 0)
+        return txDate >= startDateObj && txDate <= endDateObj
+      })
+
+      console.log(
+        `Filtered from ${allTransactions.length} to ${filteredTransactions.length} transactions based on date range`,
+      )
+
+      const paginatedTransactions = filteredTransactions.slice(0, pageSize)
+
+      if (page === 1) {
+        await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, filteredTransactions)
+      }
+
+      return {
+        transactions: paginatedTransactions,
+        totalCount: filteredTransactions.length,
+        hasMore: filteredTransactions.length > pageSize,
+      }
+    }
+
+    const paginatedTransactions = allTransactions.slice(0, pageSize)
+
+    if (page === 1) {
+      await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, allTransactions)
+    }
+
+    console.log(`Returning ${paginatedTransactions.length} transactions, hasMore: ${hasMoreResults}`)
+
+    return {
+      transactions: paginatedTransactions,
+      totalCount: allTransactions.length,
+      hasMore: hasMoreResults,
+    }
+  } catch (err) {
+    console.error("Fetch transactions error:", err)
+
+    if (page === 1) {
+      const entityId = await leanEntityService.getEntityId()
+      if (entityId) {
+        const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
+        if (cachedData) {
+          console.log("Using expired cached transactions data due to fetch error")
+          const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
+          return {
+            transactions: paginatedTransactions,
+            totalCount: cachedData.transactions.length,
+            hasMore: cachedData.transactions.length > pageSize,
+          }
         }
       }
     }
@@ -542,31 +459,21 @@ export const fetchTransactions = async (
 
 /**
  * Fetch with retry and exponential backoff
- *
- * @param url The URL to fetch
- * @param options Fetch options
- * @param attempt Current attempt number
- * @returns Promise with response
  */
 async function fetchWithRetry(url: string, options: RequestInit, attempt = 1): Promise<Response> {
   try {
     const response = await fetch(url, options)
 
-    // If we get a 429 (Too Many Requests), retry with exponential backoff
     if (response.status === 429 && attempt < MAX_RETRY_ATTEMPTS) {
-      const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1) // Exponential backoff
+      const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1)
       console.log(`Rate limited (429). Retrying in ${delay}ms (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS})`)
-
       await new Promise((resolve) => setTimeout(resolve, delay))
       return fetchWithRetry(url, options, attempt + 1)
     }
 
-    // If we get a 401 Unauthorized, try refreshing the token once
     if (response.status === 401 && attempt === 1) {
       console.log("Token expired, refreshing...")
       const newToken = await authService.refreshToken()
-
-      // Update the Authorization header with the new token
       const newOptions = {
         ...options,
         headers: {
@@ -574,22 +481,17 @@ async function fetchWithRetry(url: string, options: RequestInit, attempt = 1): P
           Authorization: `Bearer ${newToken}`,
         },
       }
-
-      // Retry with the new token
       return fetchWithRetry(url, newOptions, attempt + 1)
     }
 
     return response
   } catch (error) {
-    // For network errors, retry if we haven't exceeded max attempts
     if (attempt < MAX_RETRY_ATTEMPTS) {
-      const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1) // Exponential backoff
+      const delay = RETRY_DELAY_MS * Math.pow(2, attempt - 1)
       console.log(`Network error. Retrying in ${delay}ms (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS})`)
-
       await new Promise((resolve) => setTimeout(resolve, delay))
       return fetchWithRetry(url, options, attempt + 1)
     }
-
     throw error
   }
 }

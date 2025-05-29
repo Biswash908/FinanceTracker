@@ -1,8 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, ActivityIndicator } from "react-native"
-import { ACCOUNT_ID, ENTITY_ID } from "@env"
+import { View, Text, StyleSheet, TextInput, FlatList, TouchableOpacity, ActivityIndicator, Alert } from "react-native"
 import { useTheme } from "../context/ThemeContext"
 
 // Components
@@ -10,9 +9,9 @@ import TransactionCard from "../components/TransactionCard"
 import DateRangePicker from "../components/DateRangePicker"
 
 // Services and Utils
-import { fetchTransactions } from "../services/lean-api"
+import { fetchTransactionsMultiAccount, fetchAccounts } from "../services/lean-api"
 import { categorizeTransaction } from "../utils/categorizer"
-import { formatDate } from "../utils/formatters"
+import { leanEntityService } from "../services/lean-entity-service"
 
 // Get current date and first day of current month
 const getCurrentDate = () => {
@@ -47,25 +46,82 @@ const SearchScreen = () => {
   // State
   const [transactions, setTransactions] = useState([])
   const [filteredTransactions, setFilteredTransactions] = useState([])
+  const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("All")
   const [startDate, setStartDate] = useState(getFirstDayOfMonth())
   const [endDate, setEndDate] = useState(getCurrentDate())
-  const [showStartDatePicker, setShowStartDatePicker] = useState(false)
-  const [showEndDatePicker, setShowEndDatePicker] = useState(false)
+  const [entityId, setEntityId] = useState<string | null>(null)
 
-  // Fetch transactions when component mounts or dates change
+  // Check for entity ID on mount and when component focuses
   useEffect(() => {
+    const checkEntityId = async () => {
+      try {
+        const storedEntityId = await leanEntityService.getEntityId()
+        if (storedEntityId) {
+          setEntityId(storedEntityId)
+          setError(null) // Clear any previous errors
+        } else {
+          setError("No bank account connected. Please connect your bank account in Settings.")
+        }
+      } catch (err) {
+        console.error("Error checking entity ID:", err)
+        setError("Error checking bank connection status.")
+      }
+    }
+
+    checkEntityId()
+
+    // Set up an interval to check for entity ID periodically
+    const interval = setInterval(checkEntityId, 2000)
+
+    // Clean up interval on unmount
+    return () => clearInterval(interval)
+  }, [])
+
+  // Fetch accounts and transactions when entity ID is available or dates change
+  useEffect(() => {
+    if (!entityId) return
+
     const loadTransactions = async () => {
       try {
         setLoading(true)
         setError(null)
 
-        const data = await fetchTransactions(ENTITY_ID, ACCOUNT_ID, startDate, endDate)
-        setTransactions(data)
-        setFilteredTransactions(data)
+        // First, fetch accounts if we don't have them
+        if (accounts.length === 0) {
+          console.log("Fetching accounts for search...")
+          const accountsData = await fetchAccounts()
+          setAccounts(accountsData)
+
+          if (accountsData.length === 0) {
+            setError("No accounts found. Please try reconnecting your bank account.")
+            return
+          }
+        }
+
+        // Get all account IDs
+        const accountIds = accounts.length > 0 ? accounts.map((account) => account.id) : []
+
+        if (accountIds.length === 0) {
+          // If we still don't have accounts, fetch them first
+          const accountsData = await fetchAccounts()
+          setAccounts(accountsData)
+          accountIds.push(...accountsData.map((account) => account.id))
+        }
+
+        if (accountIds.length === 0) {
+          setError("No accounts available for search.")
+          return
+        }
+
+        // Fetch transactions for all accounts
+        console.log(`Fetching transactions for search from ${startDate} to ${endDate}`)
+        const result = await fetchTransactionsMultiAccount(accountIds, startDate, endDate)
+        setTransactions(result.transactions || [])
+        setFilteredTransactions(result.transactions || [])
       } catch (err) {
         console.error("Error loading transactions:", err)
         setError(err.message)
@@ -75,7 +131,7 @@ const SearchScreen = () => {
     }
 
     loadTransactions()
-  }, [startDate, endDate])
+  }, [entityId, startDate, endDate])
 
   // Filter transactions when search query or category changes
   useEffect(() => {
@@ -100,21 +156,10 @@ const SearchScreen = () => {
     setFilteredTransactions(filtered)
   }, [searchQuery, selectedCategory, transactions])
 
-  // Date picker handlers
-  const onChangeStartDate = (event, selectedDate) => {
-    setShowStartDatePicker(false)
-    if (selectedDate) {
-      const formattedDate = formatDate(selectedDate)
-      setStartDate(formattedDate)
-    }
-  }
-
-  const onChangeEndDate = (event, selectedDate) => {
-    setShowEndDatePicker(false)
-    if (selectedDate) {
-      const formattedDate = formatDate(selectedDate)
-      setEndDate(formattedDate)
-    }
+  // Handle date range change
+  const handleDateRangeChange = (newStartDate: string, newEndDate: string) => {
+    setStartDate(newStartDate)
+    setEndDate(newEndDate)
   }
 
   // Render transaction item
@@ -157,6 +202,32 @@ const SearchScreen = () => {
     )
   }
 
+  // Show connection prompt if no entity ID
+  if (!entityId && !loading) {
+    return (
+      <View style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
+        <View style={styles.header}>
+          <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Search Transactions</Text>
+        </View>
+
+        <View style={[styles.connectionPrompt, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+          <Text style={[styles.connectionTitle, isDarkMode && { color: "#FFF" }]}>Connect Your Bank Account</Text>
+          <Text style={[styles.connectionText, isDarkMode && { color: "#AAA" }]}>
+            To search your transactions, please connect your bank account in the Settings tab.
+          </Text>
+          <TouchableOpacity
+            style={[styles.connectionButton, isDarkMode && { backgroundColor: "#2C5282" }]}
+            onPress={() => {
+              Alert.alert("Connect Bank", "Please go to Settings to connect your bank account.")
+            }}
+          >
+            <Text style={styles.connectionButtonText}>Go to Settings</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    )
+  }
+
   return (
     <View style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
       {/* Header */}
@@ -184,17 +255,7 @@ const SearchScreen = () => {
       </View>
 
       {/* Date Range Picker */}
-      <DateRangePicker
-        startDate={startDate}
-        endDate={endDate}
-        showStartDatePicker={showStartDatePicker}
-        showEndDatePicker={showEndDatePicker}
-        setShowStartDatePicker={setShowStartDatePicker}
-        setShowEndDatePicker={setShowEndDatePicker}
-        onChangeStartDate={onChangeStartDate}
-        onChangeEndDate={onChangeEndDate}
-        isDarkMode={isDarkMode}
-      />
+      <DateRangePicker startDate={startDate} endDate={endDate} onDateRangeChange={handleDateRangeChange} />
 
       {/* Category Filters */}
       <View style={styles.categoryFiltersContainer}>
@@ -232,7 +293,7 @@ const SearchScreen = () => {
         <FlatList
           data={filteredTransactions}
           renderItem={renderTransactionItem}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item?.id || `transaction-${Math.random().toString(36).substring(2, 15)}`}
           contentContainerStyle={styles.listContent}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
@@ -347,6 +408,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#666",
     lineHeight: 24,
+  },
+  connectionPrompt: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 24,
+    marginTop: 32,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  connectionTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 12,
+  },
+  connectionText: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: 24,
+  },
+  connectionButton: {
+    backgroundColor: "#3498db",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  connectionButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
 })
 
