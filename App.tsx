@@ -14,6 +14,7 @@ import DashboardScreen from "./src/screens/DashboardScreen"
 import TransactionsScreen from "./src/screens/TransactionsScreen"
 import SettingsScreen from "./src/screens/SettingsScreen"
 import LoginScreen from "./src/screens/LoginScreen"
+import OnboardingScreen from "./src/screens/OnboardingScreen"
 
 // Components
 import LeanWebView from "./src/components/LeanWebView"
@@ -65,6 +66,7 @@ const App = () => {
   const [customerId, setCustomerId] = useState(null)
   const [showLeanWeb, setShowLeanWeb] = useState(false)
   const [authInitialized, setAuthInitialized] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   // Initialize auth service
   useEffect(() => {
@@ -83,18 +85,25 @@ const App = () => {
     initAuth()
   }, [])
 
-  // Check login status on app start
+  // Check login status and onboarding on app start
   useEffect(() => {
     const checkLoginStatus = async () => {
       try {
         const userToken = await AsyncStorage.getItem("userToken")
         const storedCustomerId = await AsyncStorage.getItem("customerId")
+        const hasSeenOnboarding = await AsyncStorage.getItem("hasSeenOnboarding")
 
         if (storedCustomerId) {
           setCustomerId(storedCustomerId)
         }
 
-        setIsLoggedIn(userToken !== null)
+        const isUserLoggedIn = userToken !== null
+        setIsLoggedIn(isUserLoggedIn)
+
+        // Show onboarding if user hasn't seen it and is not logged in
+        if (!hasSeenOnboarding && !isUserLoggedIn) {
+          setShowOnboarding(true)
+        }
       } catch (error) {
         console.error("Error checking login status:", error)
       } finally {
@@ -137,6 +146,16 @@ const App = () => {
 
     return () => clearInterval(intervalId)
   }, [isLoggedIn, customerId])
+
+  // Handle onboarding completion
+  const handleOnboardingComplete = async () => {
+    try {
+      await AsyncStorage.setItem("hasSeenOnboarding", "true")
+      setShowOnboarding(false)
+    } catch (error) {
+      console.error("Error saving onboarding status:", error)
+    }
+  }
 
   // Handle login
   const handleLogin = async (token, userId) => {
@@ -208,7 +227,11 @@ const App = () => {
       <ThemeProvider>
         <NavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
-            {!isLoggedIn ? (
+            {showOnboarding ? (
+              <Stack.Screen name="Onboarding">
+                {(props) => <OnboardingScreen {...props} onComplete={handleOnboardingComplete} />}
+              </Stack.Screen>
+            ) : !isLoggedIn ? (
               <Stack.Screen name="Login">{(props) => <LoginScreen {...props} onLogin={handleLogin} />}</Stack.Screen>
             ) : (
               <Stack.Screen name="Main">

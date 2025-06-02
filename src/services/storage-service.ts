@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage"
 
 // Storage keys
-const ACCOUNTS_CACHE_KEY = "accounts_cache"
+const ACCOUNTS_CACHE_PREFIX = "accounts_cache_" // Changed to support multiple entities
 const TRANSACTIONS_CACHE_PREFIX = "transactions_cache_"
 const CACHE_EXPIRY_KEY = "cache_expiry"
 
@@ -10,26 +10,35 @@ const DEFAULT_CACHE_EXPIRY = 24 * 60 * 60 * 1000
 
 export class StorageService {
   /**
-   * Save accounts data to cache
+   * Save accounts data to cache for multiple entities
    */
-  static async saveAccounts(accounts: any[]): Promise<void> {
+  static async saveAccounts(accounts: any[], entityIds: string[] = []): Promise<void> {
     try {
       const cacheData = {
         accounts,
+        entityIds,
         timestamp: Date.now(),
       }
-      await AsyncStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(cacheData))
+
+      // Create a cache key based on entity IDs
+      const cacheKey =
+        entityIds.length > 0 ? `${ACCOUNTS_CACHE_PREFIX}${entityIds.sort().join("_")}` : `${ACCOUNTS_CACHE_PREFIX}all`
+
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(cacheData))
     } catch (error) {
       console.error("Error saving accounts to cache:", error)
     }
   }
 
   /**
-   * Get cached accounts data
+   * Get cached accounts data for specific entities
    */
-  static async getCachedAccounts(): Promise<{ accounts: any[]; timestamp: number } | null> {
+  static async getCachedAccounts(entityIds: string[] = []): Promise<{ accounts: any[]; timestamp: number } | null> {
     try {
-      const cachedData = await AsyncStorage.getItem(ACCOUNTS_CACHE_KEY)
+      const cacheKey =
+        entityIds.length > 0 ? `${ACCOUNTS_CACHE_PREFIX}${entityIds.sort().join("_")}` : `${ACCOUNTS_CACHE_PREFIX}all`
+
+      const cachedData = await AsyncStorage.getItem(cacheKey)
       if (cachedData) {
         return JSON.parse(cachedData)
       }
@@ -41,7 +50,7 @@ export class StorageService {
   }
 
   /**
-   * Cache transactions data
+   * Cache transactions data (updated to include entity info)
    */
   static async cacheTransactions(
     entityId: string,
@@ -56,6 +65,7 @@ export class StorageService {
 
       const cacheData = {
         transactions,
+        entityId,
         timestamp: Date.now(),
       }
 
@@ -121,7 +131,10 @@ export class StorageService {
 
       // Filter cache keys
       const cacheKeys = keys.filter(
-        (key) => key === ACCOUNTS_CACHE_KEY || key.startsWith(TRANSACTIONS_CACHE_PREFIX) || key === CACHE_EXPIRY_KEY,
+        (key) =>
+          key.startsWith(ACCOUNTS_CACHE_PREFIX) ||
+          key.startsWith(TRANSACTIONS_CACHE_PREFIX) ||
+          key === CACHE_EXPIRY_KEY,
       )
 
       // Remove all cache keys
@@ -158,6 +171,29 @@ export class StorageService {
   }
 
   /**
+   * Clear cache for a specific entity
+   */
+  static async clearEntityCache(entityId: string): Promise<void> {
+    try {
+      const keys = await AsyncStorage.getAllKeys()
+
+      // Filter keys that contain this entity ID
+      const entityCacheKeys = keys.filter(
+        (key) =>
+          (key.startsWith(ACCOUNTS_CACHE_PREFIX) || key.startsWith(TRANSACTIONS_CACHE_PREFIX)) &&
+          key.includes(entityId),
+      )
+
+      if (entityCacheKeys.length > 0) {
+        await AsyncStorage.multiRemove(entityCacheKeys)
+        console.log(`Cleared ${entityCacheKeys.length} cache items for entity ${entityId}`)
+      }
+    } catch (error) {
+      console.error("Error clearing entity cache:", error)
+    }
+  }
+
+  /**
    * Clear old cached data (older than the expiry time)
    */
   static async clearOldCache(): Promise<void> {
@@ -166,7 +202,9 @@ export class StorageService {
       const keys = await AsyncStorage.getAllKeys()
 
       // Filter cache keys
-      const cacheKeys = keys.filter((key) => key === ACCOUNTS_CACHE_KEY || key.startsWith(TRANSACTIONS_CACHE_PREFIX))
+      const cacheKeys = keys.filter(
+        (key) => key.startsWith(ACCOUNTS_CACHE_PREFIX) || key.startsWith(TRANSACTIONS_CACHE_PREFIX),
+      )
 
       // Check each cache item
       const keysToRemove = []

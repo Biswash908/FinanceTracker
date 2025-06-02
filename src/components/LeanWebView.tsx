@@ -8,6 +8,7 @@ import { APP_TOKEN } from "@env"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import { leanCustomerService } from "../services/lean-customer-service"
 import { leanEntityService } from "../services/lean-entity-service"
+import { fetchAccounts } from "../services/lean-api"
 
 interface LeanWebViewProps {
   onClose: (status: string, message?: string, entityId?: string) => void
@@ -142,6 +143,52 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
       }
 
       return null
+    }
+  }
+
+  // Function to create detailed success message
+  const createSuccessMessage = async (entityId: string): Promise<string> => {
+    try {
+      console.log("Creating detailed success message for entity:", entityId)
+
+      // Fetch accounts to get bank and account information
+      const accounts = await fetchAccounts()
+
+      if (accounts && accounts.length > 0) {
+        // Get unique bank names (in sandbox, this might be "Mock Bank" or similar)
+        const bankNames = [
+          ...new Set(accounts.map((account) => account.bank_name || account.institution_name || "Mock Bank")),
+        ]
+        const bankName = bankNames[0] || "Mock Bank"
+
+        // Get account names/numbers
+        const accountNames = accounts
+          .map(
+            (account) => account.name || account.account_name || `Account ${account.account_id?.slice(-4) || "XXXX"}`,
+          )
+          .slice(0, 3) // Limit to first 3 accounts for readability
+
+        let message = `Connection to ${bankName} successful!`
+
+        if (accountNames.length > 0) {
+          if (accountNames.length === 1) {
+            message += `\n\nAccount connected: ${accountNames[0]}`
+          } else if (accountNames.length <= 3) {
+            message += `\n\nAccounts connected: ${accountNames.join(", ")}`
+          } else {
+            message += `\n\nAccounts connected: ${accountNames.slice(0, 2).join(", ")} and ${accounts.length - 2} more`
+          }
+        }
+
+        message += `\n\nYour financial data is now available in the app.`
+
+        return message
+      } else {
+        return "Bank connection successful! Your financial data is now available in the app."
+      }
+    } catch (error) {
+      console.error("Error creating detailed success message:", error)
+      return "Bank connection successful! Your financial data is now available in the app."
     }
   }
 
@@ -306,19 +353,40 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
             if (entityId) {
               console.log("Successfully retrieved entity ID:", entityId)
 
-              // Store the entity ID for future use
-              await leanEntityService.storeEntityId(entityId)
+              // Default values for sandbox environment
+              let userName = "Demo User"
+              let bankName = "Demo Bank"
 
-              // Try to fetch and cache identity data
+              // Try to extract bank name from response if available
+              if (response.bank_name) {
+                bankName = response.bank_name
+              } else if (response.institution_name) {
+                bankName = response.institution_name
+              }
+
+              // Try to extract user name from response if available
+              if (response.user_name) {
+                userName = response.user_name
+              } else if (response.customer_name) {
+                userName = response.customer_name
+              }
+
+              // Store the entity ID with additional information for multi-bank support
+              await leanEntityService.storeEntityId(entityId, bankName, userName)
+
+              // Try to fetch and cache identity data (optional)
               try {
                 await leanEntityService.fetchIdentity(entityId, accessToken)
                 console.log("Identity data fetched and cached successfully")
               } catch (identityError) {
-                console.warn("Could not fetch identity data:", identityError)
-                // Don't fail the connection for this
+                // Identity fetch is optional and may not be available in sandbox
+                // Silently continue without logging the error
+                console.log("Identity data not available (this is normal in sandbox environment)")
               }
 
-              onClose("SUCCESS", response.message || "Bank connected successfully", entityId)
+              // Create detailed success message
+              const detailedMessage = await createSuccessMessage(entityId)
+              onClose("SUCCESS", detailedMessage, entityId)
             } else {
               console.warn("Could not retrieve entity ID after connection")
               // Still consider it a success, but without entity ID
@@ -435,7 +503,7 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
                   console.error("WebView error:", nativeEvent)
                 }}
                 style={styles.webView}
-                allowsInlineMediaPlayback={true}
+                allowsInlineMediaPlaybook={true}
                 mediaPlaybackRequiresUserAction={false}
                 mixedContentMode="always"
                 scalesPageToFit={false}

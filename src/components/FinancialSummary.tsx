@@ -341,9 +341,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
-    elevation: 5,
+    elevation: 20,
     minWidth: 170,
-    zIndex: 20,
+    zIndex: 1000,
   },
   dropdownItem: {
     flexDirection: "row",
@@ -403,7 +403,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    zIndex: 5,
+    backgroundColor: "transparent",
+    zIndex: 999, // Higher than anything in TransactionsScreen
   },
 })
 

@@ -23,7 +23,18 @@ const logApiCall = (name: string, request: any, response?: any) => {
 }
 
 /**
- * Get the current entity ID from storage
+ * Get all stored entity IDs
+ */
+async function getAllEntityIds(): Promise<string[]> {
+  const entityIds = await leanEntityService.getAllEntityIds()
+  if (entityIds.length === 0) {
+    throw new Error("No entity IDs found. Please connect your bank account first.")
+  }
+  return entityIds
+}
+
+/**
+ * Get the primary entity ID for backward compatibility
  */
 async function getStoredEntityId(): Promise<string> {
   const entityId = await leanEntityService.getEntityId()
@@ -34,68 +45,90 @@ async function getStoredEntityId(): Promise<string> {
 }
 
 /**
- * Fetches all available accounts for the current entity
+ * Fetches all available accounts from all connected entities
  */
 export const fetchAccounts = async (): Promise<any[]> => {
   try {
+    // Get all entity IDs
+    const entityIds = await getAllEntityIds()
+
     // Check cache first
-    const cachedData = await StorageService.getCachedAccounts()
+    const cachedData = await StorageService.getCachedAccounts(entityIds)
     if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 3600000)) {
       console.log("Using cached accounts data")
       return cachedData.accounts
     }
 
-    // Get the stored entity ID
-    const entityId = await getStoredEntityId()
-    console.log(`Fetching accounts for entity: ${entityId}`)
+    console.log(`Fetching accounts for ${entityIds.length} entities:`, entityIds)
 
     // Get a valid token from the auth service
     const token = await authService.getToken()
+    const allAccounts = []
 
-    const requestBody = {
-      entity_id: entityId,
+    // Fetch accounts from each entity
+    for (const entityId of entityIds) {
+      try {
+        const requestBody = {
+          entity_id: entityId,
+        }
+
+        logApiCall(`fetchAccounts (entity ${entityId})`, requestBody)
+
+        const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/accounts`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Scope: "api",
+          },
+          body: JSON.stringify(requestBody),
+        })
+
+        const responseText = await response.text()
+        logApiCall(`fetchAccounts Response (entity ${entityId})`, requestBody, responseText)
+
+        let data
+        try {
+          data = JSON.parse(responseText)
+        } catch (e) {
+          console.error(`Failed to parse JSON for entity ${entityId}:`, e)
+          continue
+        }
+
+        if (data.payload && data.payload.accounts) {
+          // Get entity info for bank name and user name
+          const entities = await leanEntityService.getAllEntities()
+          const entityInfo = entities.find((e) => e.entityId === entityId)
+
+          const accounts = data.payload.accounts.map((account) => ({
+            ...account,
+            id: account.account_id,
+            entityId: entityId,
+            bankName: entityInfo?.bankName || "Unknown Bank",
+            userName: entityInfo?.userName || "Unknown User",
+          }))
+
+          allAccounts.push(...accounts)
+        } else {
+          console.warn(`No accounts found for entity ${entityId}`)
+        }
+      } catch (error) {
+        console.error(`Error fetching accounts for entity ${entityId}:`, error)
+        // Continue with other entities
+      }
     }
 
-    logApiCall("fetchAccounts", requestBody)
+    // Cache the combined accounts
+    await StorageService.saveAccounts(allAccounts, entityIds)
+    console.log(`Fetched ${allAccounts.length} total accounts from ${entityIds.length} entities`)
 
-    const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/accounts`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-        Scope: "api",
-      },
-      body: JSON.stringify(requestBody),
-    })
-
-    const responseText = await response.text()
-    logApiCall("fetchAccounts Response", requestBody, responseText)
-
-    let data
-    try {
-      data = JSON.parse(responseText)
-    } catch (e) {
-      console.error("Failed to parse JSON:", e)
-      throw new Error("Invalid JSON response from server")
-    }
-
-    if (data.payload && data.payload.accounts) {
-      const accounts =
-        data.payload.accounts.map((account) => ({
-          ...account,
-          id: account.account_id,
-        })) || []
-
-      await StorageService.saveAccounts(accounts)
-      return accounts
-    } else {
-      console.error("API Error:", data)
-      return []
-    }
+    return allAccounts
   } catch (err) {
     console.error("Fetch accounts error:", err)
 
-    const cachedData = await StorageService.getCachedAccounts()
+    // Try to get cached data even if expired
+    const entityIds = await leanEntityService.getAllEntityIds()
+    const cachedData = await StorageService.getCachedAccounts(entityIds)
     if (cachedData) {
       console.log("Using expired cached accounts data due to fetch error")
       return cachedData.accounts
@@ -106,8 +139,7 @@ export const fetchAccounts = async (): Promise<any[]> => {
 }
 
 /**
- * Fetches transactions for a single account (original dashboard interface)
- * This maintains compatibility with the original dashboard code
+ * Fetches transactions for a single account (backward compatibility)
  */
 export const fetchTransactions = async (
   entityIdOrAccountId: string, // This will be ENTITY_ID from the original code
@@ -122,12 +154,32 @@ export const fetchTransactions = async (
   hasMore: boolean
 }> => {
   try {
-    // Get the actual entity ID from storage (ignore the passed entityId parameter)
-    const entityId = await getStoredEntityId()
+    // Find the correct entity ID for this account
+    const allAccounts = await fetchAccounts()
+    const account = allAccounts.find((acc) => acc.id === accountId)
+
+    if (!account) {
+      console.error(`Account ${accountId} not found in available accounts`)
+      return {
+        transactions: [],
+        totalCount: 0,
+        hasMore: false,
+      }
+    }
+
+    const entityId = account.entityId
+    if (!entityId) {
+      console.error(`No entity ID found for account ${accountId}`)
+      return {
+        transactions: [],
+        totalCount: 0,
+        hasMore: false,
+      }
+    }
 
     console.log(`API Request - fetchTransactions:
-      entityId: ${entityId} (from storage)
       accountId: ${accountId}
+      entityId: ${entityId} (from account mapping)
       startDate: ${startDate}
       endDate: ${endDate}
       page: ${page}
@@ -191,9 +243,10 @@ export const fetchTransactions = async (
       const transactions = data.payload.transactions.map((transaction, index) => ({
         ...transaction,
         account_id: accountId,
+        entity_id: entityId,
         id:
           transaction.id ||
-          `${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+          `${entityId}-${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
       }))
 
       // Filter transactions by date client-side
@@ -247,9 +300,11 @@ export const fetchTransactions = async (
     console.error("Fetch error:", err)
 
     if (page === 1) {
-      const entityId = await leanEntityService.getEntityId()
-      if (entityId) {
-        const cachedData = await StorageService.getCachedTransactions(entityId, [accountId], startDate, endDate)
+      // Try to get cached data for any entity that has this account
+      const allAccounts = await fetchAccounts()
+      const account = allAccounts.find((acc) => acc.id === accountId)
+      if (account && account.entityId) {
+        const cachedData = await StorageService.getCachedTransactions(account.entityId, [accountId], startDate, endDate)
         if (cachedData) {
           console.log("Using expired cached transactions data due to fetch error")
           const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
@@ -267,7 +322,7 @@ export const fetchTransactions = async (
 }
 
 /**
- * Fetches transactions for multiple accounts
+ * Fetches transactions for multiple accounts across all entities
  */
 export const fetchTransactionsMultiAccount = async (
   accountIds: string[],
@@ -289,11 +344,10 @@ export const fetchTransactionsMultiAccount = async (
       }
     }
 
-    // Get the stored entity ID
-    const entityId = await getStoredEntityId()
+    // Get all accounts to map them to entities
+    const allAccounts = await fetchAccounts()
 
     console.log(`API Request - fetchTransactionsMultiAccount:
-      entityId: ${entityId}
       accountIds: ${accountIds.join(", ")}
       startDate: ${startDate}
       endDate: ${endDate}
@@ -301,9 +355,27 @@ export const fetchTransactionsMultiAccount = async (
       pageSize: ${pageSize}
     `)
 
-    // For first page, check cache
-    if (page === 1) {
-      const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
+    // Create a map of entity ID to account IDs
+    const entityAccountMap = new Map<string, string[]>()
+
+    for (const accountId of accountIds) {
+      const account = allAccounts.find((acc) => acc.id === accountId)
+      if (account && account.entityId) {
+        if (!entityAccountMap.has(account.entityId)) {
+          entityAccountMap.set(account.entityId, [])
+        }
+        entityAccountMap.get(account.entityId)!.push(accountId)
+      } else {
+        console.warn(`Account ${accountId} not found or missing entity ID`)
+      }
+    }
+
+    console.log("Entity-Account mapping:", Object.fromEntries(entityAccountMap))
+
+    // For first page, check cache (use a combined cache key)
+    if (page === 1 && entityAccountMap.size > 0) {
+      const firstEntityId = Array.from(entityAccountMap.keys())[0]
+      const cachedData = await StorageService.getCachedTransactions(firstEntityId, accountIds, startDate, endDate)
       if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 3600000)) {
         console.log("Using cached transactions data")
         const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
@@ -320,67 +392,74 @@ export const fetchTransactionsMultiAccount = async (
     const allTransactions = []
     let hasMoreResults = false
 
-    // Fetch transactions for each account
-    for (let i = 0; i < accountIds.length; i++) {
-      const accountId = accountIds[i]
+    // Fetch transactions for each entity's accounts
+    for (const [entityId, entityAccountIds] of entityAccountMap) {
+      for (let i = 0; i < entityAccountIds.length; i++) {
+        const accountId = entityAccountIds[i]
 
-      if (i > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+        }
 
-      const requestBody = {
-        entity_id: entityId,
-        account_id: accountId,
-        from_date: startDate,
-        to_date: endDate,
-        limit: pageSize,
-        offset: offset,
-      }
+        const requestBody = {
+          entity_id: entityId,
+          account_id: accountId,
+          from_date: startDate,
+          to_date: endDate,
+          limit: pageSize,
+          offset: offset,
+        }
 
-      console.log(`Fetching for account ${accountId}`)
-      logApiCall(`fetchTransactionsMultiAccount (account ${accountId})`, requestBody)
+        console.log(`Fetching for entity ${entityId}, account ${accountId}`)
+        logApiCall(`fetchTransactionsMultiAccount (entity ${entityId}, account ${accountId})`, requestBody)
 
-      try {
-        const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/transactions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            Scope: "api",
-          },
-          body: JSON.stringify(requestBody),
-        })
-
-        const responseText = await response.text()
-        logApiCall(`fetchTransactionsMultiAccount Response (account ${accountId})`, requestBody, responseText)
-
-        let data
         try {
-          data = JSON.parse(responseText)
-        } catch (e) {
-          console.warn(`Failed to parse JSON for account ${accountId}:`, e)
-          continue
-        }
+          const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/transactions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+              Scope: "api",
+            },
+            body: JSON.stringify(requestBody),
+          })
 
-        if (data.payload && Array.isArray(data.payload.transactions)) {
-          const accountTransactions = data.payload.transactions.map((transaction, index) => ({
-            ...transaction,
-            account_id: accountId,
-            id:
-              transaction.id ||
-              `${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
-          }))
+          const responseText = await response.text()
+          logApiCall(
+            `fetchTransactionsMultiAccount Response (entity ${entityId}, account ${accountId})`,
+            requestBody,
+            responseText,
+          )
 
-          allTransactions.push(...accountTransactions)
-
-          if (data.payload.transactions.length >= pageSize) {
-            hasMoreResults = true
+          let data
+          try {
+            data = JSON.parse(responseText)
+          } catch (e) {
+            console.warn(`Failed to parse JSON for entity ${entityId}, account ${accountId}:`, e)
+            continue
           }
-        } else {
-          console.warn(`No transactions found for account ${accountId} or invalid format`)
+
+          if (data.payload && Array.isArray(data.payload.transactions)) {
+            const accountTransactions = data.payload.transactions.map((transaction, index) => ({
+              ...transaction,
+              account_id: accountId,
+              entity_id: entityId,
+              id:
+                transaction.id ||
+                `${entityId}-${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+            }))
+
+            allTransactions.push(...accountTransactions)
+
+            if (data.payload.transactions.length >= pageSize) {
+              hasMoreResults = true
+            }
+          } else {
+            console.warn(`No transactions found for entity ${entityId}, account ${accountId}`)
+          }
+        } catch (error) {
+          console.warn(`Error fetching transactions for entity ${entityId}, account ${accountId}:`, error)
         }
-      } catch (error) {
-        console.warn(`Error fetching transactions for account ${accountId}:`, error)
       }
     }
 
@@ -410,8 +489,9 @@ export const fetchTransactionsMultiAccount = async (
 
       const paginatedTransactions = filteredTransactions.slice(0, pageSize)
 
-      if (page === 1) {
-        await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, filteredTransactions)
+      if (page === 1 && entityAccountMap.size > 0) {
+        const firstEntityId = Array.from(entityAccountMap.keys())[0]
+        await StorageService.cacheTransactions(firstEntityId, accountIds, startDate, endDate, filteredTransactions)
       }
 
       return {
@@ -423,8 +503,9 @@ export const fetchTransactionsMultiAccount = async (
 
     const paginatedTransactions = allTransactions.slice(0, pageSize)
 
-    if (page === 1) {
-      await StorageService.cacheTransactions(entityId, accountIds, startDate, endDate, allTransactions)
+    if (page === 1 && entityAccountMap.size > 0) {
+      const firstEntityId = Array.from(entityAccountMap.keys())[0]
+      await StorageService.cacheTransactions(firstEntityId, accountIds, startDate, endDate, allTransactions)
     }
 
     console.log(`Returning ${paginatedTransactions.length} transactions, hasMore: ${hasMoreResults}`)
@@ -438,9 +519,16 @@ export const fetchTransactionsMultiAccount = async (
     console.error("Fetch transactions error:", err)
 
     if (page === 1) {
-      const entityId = await leanEntityService.getEntityId()
-      if (entityId) {
-        const cachedData = await StorageService.getCachedTransactions(entityId, accountIds, startDate, endDate)
+      // Try to get cached data
+      const allAccounts = await fetchAccounts()
+      const firstAccount = allAccounts.find((acc) => accountIds.includes(acc.id))
+      if (firstAccount && firstAccount.entityId) {
+        const cachedData = await StorageService.getCachedTransactions(
+          firstAccount.entityId,
+          accountIds,
+          startDate,
+          endDate,
+        )
         if (cachedData) {
           console.log("Using expired cached transactions data due to fetch error")
           const paginatedTransactions = cachedData.transactions.slice(0, pageSize)
@@ -454,6 +542,26 @@ export const fetchTransactionsMultiAccount = async (
     }
 
     throw err
+  }
+}
+
+/**
+ * Remove a bank connection (entity)
+ */
+export const removeBankConnection = async (entityId: string): Promise<void> => {
+  try {
+    console.log("Removing bank connection for entity:", entityId)
+
+    // Remove from entity service
+    await leanEntityService.removeEntity(entityId)
+
+    // Clear cache for this entity
+    await StorageService.clearEntityCache(entityId)
+
+    console.log("Bank connection removed successfully")
+  } catch (error) {
+    console.error("Error removing bank connection:", error)
+    throw error
   }
 }
 

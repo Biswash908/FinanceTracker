@@ -12,10 +12,6 @@ interface TransactionFiltersProps {
   setSelectedCategory: (category: string[]) => void
   selectedType: string[]
   setSelectedType: (type: string[]) => void
-  sortOption: string
-  setSortOption: (option: string) => void
-  sortDirection: "asc" | "desc"
-  setSortDirection: (direction: "asc" | "desc") => void
   onResetFilters?: () => void
 }
 
@@ -24,44 +20,32 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   setSelectedCategory,
   selectedType,
   setSelectedType,
-  sortOption,
-  setSortOption,
-  sortDirection,
-  setSortDirection,
   onResetFilters,
 }) => {
   const { isDarkMode } = useTheme()
-  const [showSortOptions, setShowSortOptions] = useState(false)
   const [isProcessingCategoryChange, setIsProcessingCategoryChange] = useState(false)
   const [isProcessingTypeChange, setIsProcessingTypeChange] = useState(false)
 
+  // Sort categories alphabetically (except "All" which stays first)
   const categoryFilters = [
     "All",
-    "Food",
-    "Shopping",
-    "Entertainment",
-    "Utilities",
-    "Transport",
-    "Education",
-    "Health",
-    "Charity",
-    "Housing",
-    "Income",
-    "Other",
+    ...[
+      "Charity",
+      "Education",
+      "Entertainment",
+      "Food",
+      "Health",
+      "Housing",
+      "Income",
+      "Other",
+      "Shopping",
+      "Transport",
+      "Utilities",
+    ].sort(),
   ]
 
   // Changed "Income" to "Inflow" in transaction types
   const transactionTypes = ["All", "Inflow", "Expense", "Pending"]
-
-  const sortOptions = [
-    { id: "date", label: "Date" },
-    { id: "amount", label: "Amount" },
-    { id: "category", label: "Category" },
-  ]
-
-  const toggleSortDirection = () => {
-    setSortDirection(sortDirection === "asc" ? "desc" : "asc")
-  }
 
   // Handle transaction type selection
   const handleTypePress = useCallback(
@@ -212,50 +196,6 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
         </View>
       </View>
 
-      {/* Sort Options */}
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, isDarkMode && { color: "#DDD" }]}>Sort By</Text>
-        <View style={styles.sortOptionsContainer}>
-          {sortOptions.map((option) => (
-            <TouchableOpacity
-              key={option.id}
-              style={[
-                styles.sortOption,
-                sortOption === option.id && styles.selectedSortOption,
-                isDarkMode && { backgroundColor: "#333" },
-                sortOption === option.id && isDarkMode && { backgroundColor: "#2C5282" },
-              ]}
-              onPress={() => {
-                if (sortOption === option.id) {
-                  toggleSortDirection()
-                } else {
-                  setSortOption(option.id)
-                }
-              }}
-            >
-              <Text
-                style={[
-                  styles.sortOptionText,
-                  sortOption === option.id && styles.selectedSortOptionText,
-                  isDarkMode && { color: "#DDD" },
-                ]}
-              >
-                {option.label}
-              </Text>
-              {sortOption === option.id && (
-                <View style={styles.directionIndicator}>
-                  <MaterialIcons
-                    name={sortDirection === "asc" ? "arrow-upward" : "arrow-downward"}
-                    size={16}
-                    color="#FFF"
-                  />
-                </View>
-              )}
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
-
       {/* Reset Filters Button */}
       {onResetFilters && (
         <TouchableOpacity
@@ -330,43 +270,6 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 8,
     marginTop: 8,
-  },
-  sortHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  sortOptionsContainer: {
-    marginTop: 8,
-    flexDirection: "row",
-    flexWrap: "wrap",
-  },
-  sortOption: {
-    backgroundColor: "#f0f0f0",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
-    marginBottom: 8,
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  selectedSortOption: {
-    backgroundColor: "#3498db",
-  },
-  sortOptionText: {
-    fontSize: 14,
-    color: "#333",
-  },
-  selectedSortOptionText: {
-    color: "#fff",
-    fontWeight: "bold",
-  },
-  directionButton: {
-    marginLeft: 6,
-  },
-  directionIndicator: {
-    marginLeft: 6,
   },
   resetButton: {
     flexDirection: "row",

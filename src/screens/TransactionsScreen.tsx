@@ -20,6 +20,8 @@ import {
 import { ENTITY_ID } from "@env"
 import { MaterialIcons } from "@expo/vector-icons"
 import { useFocusEffect } from "@react-navigation/native"
+import * as FileSystem from "expo-file-system"
+import * as Sharing from "expo-sharing"
 
 // Components
 import TransactionCard from "../components/TransactionCard"
@@ -28,12 +30,12 @@ import FinancialSummary from "../components/FinancialSummary"
 import AccountSelector from "../components/AccountSelector"
 import TransactionFilters from "../components/TransactionFilters"
 import CustomScrollbar from "../components/CustomScrollbar"
+import BankManagementModal from "../components/BankManagementModal"
 
 // Services and Utils
 import { fetchTransactions, fetchAccounts, clearAllCache, clearTransactionsCache } from "../services/lean-api"
 import { categorizeTransaction, calculateFinancials } from "../utils/categorizer"
 import { StorageService } from "../services/storage-service"
-import { exportTransactionsToExcel } from "../utils/excel-export"
 import { useTheme } from "../context/ThemeContext"
 import { leanEntityService } from "../services/lean-entity-service"
 
@@ -52,6 +54,16 @@ const TRANSACTIONS_PER_PAGE = 50
 const MULTI_ACCOUNT_TRANSACTIONS_PER_PAGE = 100
 // Maximum number of pages to load per account (to prevent infinite loops)
 const MAX_PAGES_PER_ACCOUNT = 20
+
+// Sort options for transaction history
+const transactionSortOptions = [
+  { key: "date_desc", label: "Date (Newest First)", sortBy: "date", direction: "desc" },
+  { key: "date_asc", label: "Date (Oldest First)", sortBy: "date", direction: "asc" },
+  { key: "amount_desc", label: "Amount (High to Low)", sortBy: "amount", direction: "desc" },
+  { key: "amount_asc", label: "Amount (Low to High)", sortBy: "amount", direction: "asc" },
+  { key: "alpha_asc", label: "Alphabetical (A-Z)", sortBy: "category", direction: "asc" },
+  { key: "alpha_desc", label: "Alphabetical (Z-A)", sortBy: "category", direction: "desc" },
+]
 
 const TransactionsScreen = () => {
   const { isDarkMode } = useTheme()
@@ -97,6 +109,10 @@ const TransactionsScreen = () => {
   const [lastRefreshTime, setLastRefreshTime] = useState<Date | null>(null)
   // Add entity ID state
   const [entityId, setEntityId] = useState<string | null>(null)
+  // Add state for transaction history sort dropdown
+  const [transactionSortDropdownVisible, setTransactionSortDropdownVisible] = useState(false)
+  // Add state for bank management modal
+  const [showBankManagement, setShowBankManagement] = useState(false)
 
   // Refs
   const mainScrollViewRef = useRef(null)
@@ -621,6 +637,20 @@ const TransactionsScreen = () => {
     // The useEffect will trigger a reload
   }, [])
 
+  // Handle bank management
+  const handleManageBanks = useCallback(() => {
+    setShowBankManagement(true)
+  }, [])
+
+  const handleBankManagementClose = useCallback(() => {
+    setShowBankManagement(false)
+  }, [])
+
+  const handleBanksChanged = useCallback(() => {
+    // Reload accounts when banks are added/removed
+    loadAccounts()
+  }, [])
+
   // Handle cache clearing
   const handleClearCache = useCallback(async () => {
     try {
@@ -643,8 +673,8 @@ const TransactionsScreen = () => {
     }
   }, [entityId])
 
-  // Handle export to Excel
-  const handleExportToExcel = useCallback(async () => {
+  // Handle export to CSV - Updated to download instead of share
+  const handleExportToCSV = useCallback(async () => {
     try {
       setIsExporting(true)
 
@@ -655,28 +685,75 @@ const TransactionsScreen = () => {
       }
 
       // Generate filename with date range
-      const fileName = `Transactions_${startDate}_to_${endDate}`
+      const fileName = `Transactions_${startDate}_to_${endDate}.csv`
 
-      console.log("Starting export process...")
+      console.log("Starting CSV export process...")
 
-      // Export the transactions
-      await exportTransactionsToExcel(sortedTransactions, fileName)
+      // Create CSV content
+      const headers = ["Date", "Description", "Amount", "Category", "Account", "Status"]
+      const csvContent = [
+        headers.join(","),
+        ...sortedTransactions.map((transaction) => {
+          const isIncome = transaction.amount > 0
+          const category = isIncome ? "income" : categorizeTransaction(transaction.description)
+          const status = transaction.pending ? "Pending" : "Completed"
+          const date = new Date(transaction.timestamp || transaction.date).toLocaleDateString()
 
-      console.log("Export completed successfully")
-      Alert.alert(
-        "Export Successful",
-        "Your transactions have been exported as a CSV file. You can open it with any spreadsheet application.",
-      )
+          return [
+            date,
+            `"${transaction.description.replace(/"/g, '""')}"`,
+            transaction.amount,
+            category,
+            `"${transaction.account_name}"`,
+            status,
+          ].join(",")
+        }),
+      ].join("\n")
+
+      // Create file path
+      const fileUri = FileSystem.documentDirectory + fileName
+
+      // Write CSV content to file
+      await FileSystem.writeAsStringAsync(fileUri, csvContent, {
+        encoding: FileSystem.EncodingType.UTF8,
+      })
+
+      console.log("CSV file created at:", fileUri)
+
+      // Download the file (save to device)
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(fileUri, {
+          mimeType: "text/csv",
+          dialogTitle: "Save CSV File",
+          UTI: "public.comma-separated-values-text",
+        })
+      } else {
+        Alert.alert("Export Complete", `CSV file saved to: ${fileName}`)
+      }
+
+      console.log("CSV export completed successfully")
     } catch (error) {
-      console.error("Error exporting to Excel:", error)
-      Alert.alert(
-        "Export Failed",
-        `Failed to export transactions: ${error.message}\n\nIf you're using Expo Go, try installing the app directly for full functionality.`,
-      )
+      console.error("Error exporting to CSV:", error)
+      Alert.alert("Export Failed", `Failed to export transactions: ${error.message}`)
     } finally {
       setIsExporting(false)
     }
   }, [sortedTransactions, startDate, endDate])
+
+  // Handle transaction history sort option change
+  const handleTransactionSortOptionChange = (sortOption: any) => {
+    setSortBy(sortOption.sortBy)
+    setSortOrder(sortOption.direction)
+    setTransactionSortDropdownVisible(false)
+  }
+
+  // Get current sort option label
+  const getCurrentSortLabel = () => {
+    const currentOption = transactionSortOptions.find(
+      (option) => option.sortBy === sortBy && option.direction === sortOrder,
+    )
+    return currentOption ? currentOption.label : "Date (Newest First)"
+  }
 
   // Handle content size change
   const handleContentSizeChange = (w: number, h: number) => {
@@ -808,6 +885,7 @@ const TransactionsScreen = () => {
             accounts={accounts}
             selectedAccounts={selectedAccounts}
             onAccountsChange={handleAccountsChange}
+            onManageBanks={handleManageBanks}
           />
         )}
 
@@ -854,7 +932,7 @@ const TransactionsScreen = () => {
           </View>
         </View>
 
-        {/* Filters and Sorting */}
+        {/* Filters (without sorting) */}
         <TransactionFilters
           selectedCategory={selectedCategory}
           setSelectedCategory={(categories) => {
@@ -866,10 +944,6 @@ const TransactionsScreen = () => {
             setSelectedType(type)
             // Don't force refresh here, just update the filter
           }}
-          sortOption={sortBy}
-          setSortOption={setSortBy}
-          sortDirection={sortOrder}
-          setSortDirection={setSortOrder}
           onResetFilters={onResetFilters}
         />
 
@@ -879,9 +953,7 @@ const TransactionsScreen = () => {
             {sortedTransactions.length.toLocaleString()}{" "}
             {sortedTransactions.length === 1 ? "transaction" : "transactions"} found
           </Text>
-          <Text style={[styles.sortInfo, isDarkMode && { color: "#AAA" }]}>
-            Sorted by: {sortBy.charAt(0).toUpperCase() + sortBy.slice(1)} {sortOrder === "asc" ? "↑" : "↓"}
-          </Text>
+          <Text style={[styles.sortInfo, isDarkMode && { color: "#AAA" }]}>Sorted by: {getCurrentSortLabel()}</Text>
         </View>
 
         {/* Financial Summary */}
@@ -906,24 +978,58 @@ const TransactionsScreen = () => {
         {/* Transaction Box Header */}
         <View style={styles.transactionBoxContainer}>
           <View style={styles.transactionHeaderRow}>
-            <View>
+            <View style={styles.transactionHeaderLeft}>
               <Text style={[styles.transactionBoxTitle, isDarkMode && { color: "#FFF" }]}>Transaction History</Text>
               <Text style={[styles.transactionSubtitle, isDarkMode && { color: "#AAA" }]}>
                 Showing {sortedTransactions.length.toLocaleString()} transactions
               </Text>
             </View>
-            <TouchableOpacity
-              style={[
-                styles.exportButton,
-                isExporting && styles.disabledButton,
-                isDarkMode && { backgroundColor: "#2C5282" },
-              ]}
-              onPress={handleExportToExcel}
-              disabled={isExporting || sortedTransactions.length === 0}
-            >
-              <MaterialIcons name="file-download" size={16} color="#FFF" />
-              <Text style={styles.exportButtonText}>{isExporting ? "Exporting..." : "Export"}</Text>
-            </TouchableOpacity>
+            <View style={styles.transactionHeaderRight}>
+              {/* Sort Button - replaces export button position */}
+              <View style={styles.sortContainer}>
+                <TouchableOpacity
+                  style={[styles.sortButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+                  onPress={() => setTransactionSortDropdownVisible(!transactionSortDropdownVisible)}
+                >
+                  <MaterialIcons name="sort" size={20} color={isDarkMode ? "#DDD" : "#555"} />
+                </TouchableOpacity>
+
+                {transactionSortDropdownVisible && (
+                  <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
+                    {transactionSortOptions.map(
+                      (option) =>
+                        (
+                        <TouchableOpacity
+                          key={option.key}
+                          style={[
+                            styles.dropdownItem,
+                            sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownItem,
+                            isDarkMode && { borderBottomColor: "#444" },
+                            sortBy === option.sortBy &&
+                              sortOrder === option.direction &&
+                              isDarkMode && { backgroundColor: "#3a3a3a" },
+                          ]}
+                          onPress={() => handleTransactionSortOptionChange(option)}
+                        >
+                        <Text
+                          style={[
+                            styles.dropdownText,
+                            sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownText,
+                            isDarkMode && { color: "#DDD" },
+                          ]}
+                        >
+                          {option.label}
+                        </Text>
+                        {sortBy === option.sortBy && sortOrder === option.direction && (
+                          <MaterialIcons name="check" size={16} color={isDarkMode ? "#3498db" : "#3498db"} />
+                        )}
+                      </TouchableOpacity>
+                        ),
+                    )}
+                  </View>
+                )}
+              </View>
+            </View>
           </View>
         </View>
 
@@ -951,6 +1057,19 @@ const TransactionsScreen = () => {
             </View>
           ) : (
             <View style={styles.flatListContainer} onLayout={handleLayout}>
+              {/* Export button inside transaction list - top right */}
+              <TouchableOpacity
+                style={[
+                  styles.exportButtonInList,
+                  isExporting && styles.disabledButton,
+                  isDarkMode && { backgroundColor: "#2C5282" },
+                ]}
+                onPress={handleExportToCSV}
+                disabled={isExporting || sortedTransactions.length === 0}
+              >
+                <MaterialIcons name="file-download" size={20} color="#FFF" />
+              </TouchableOpacity>
+
               <Animated.FlatList
                 ref={transactionListRef}
                 data={sortedTransactions}
@@ -1044,6 +1163,22 @@ const TransactionsScreen = () => {
         {/* Bottom padding */}
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      {/* Bank Management Modal */}
+      <BankManagementModal
+        visible={showBankManagement}
+        onClose={handleBankManagementClose}
+        onBanksChanged={handleBanksChanged}
+      />
+
+      {/* Overlay to close dropdown when clicking outside */}
+      {transactionSortDropdownVisible && (
+        <TouchableOpacity
+          style={styles.overlay}
+          activeOpacity={1}
+          onPress={() => setTransactionSortDropdownVisible(false)}
+        />
+      )}
     </SafeAreaView>
   )
 }
@@ -1060,7 +1195,6 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   header: {
-    marginTop: 26,
     marginBottom: 16,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1168,6 +1302,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
+  transactionHeaderLeft: {
+    flex: 1,
+  },
+  transactionHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
   transactionBoxTitle: {
     fontSize: 18,
     fontWeight: "600",
@@ -1178,19 +1319,78 @@ const styles = StyleSheet.create({
     color: "#666",
     marginTop: 4,
   },
-  exportButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#3498db",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
+  sortContainer: {
+    position: "relative",
+    zIndex: 20,
   },
-  exportButtonText: {
+  sortButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#eee",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  dropdown: {
+    position: "absolute",
+    top: 50,
+    right: 0,
+    backgroundColor: "white",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#eee",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 10, // Lower than FinancialSummary dropdown
+    minWidth: 200,
+    zIndex: 21, // Lower than FinancialSummary dropdown
+  },
+  dropdownItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f0f0f0",
+  },
+  selectedDropdownItem: {
+    backgroundColor: "#f0f7ff",
+  },
+  dropdownText: {
     fontSize: 14,
-    color: "#fff",
-    marginLeft: 4,
-    fontWeight: "500",
+    color: "#333",
+    flex: 1,
+  },
+  selectedDropdownText: {
+    fontWeight: "600",
+    color: "#3498db",
+  },
+  exportButtonInList: {
+    position: "absolute",
+    top: 12,
+    right: 12,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#3498db",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 100,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 5,
   },
   transactionBox: {
     height: screenHeight * 0.75,
@@ -1211,6 +1411,7 @@ const styles = StyleSheet.create({
   },
   transactionListContent: {
     padding: 8,
+    paddingTop: 60, // Add padding to account for export button
   },
   loadingContainer: {
     flex: 1,
@@ -1381,6 +1582,14 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontSize: 16,
     fontWeight: "600",
+  },
+  overlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 99, // Lower than dropdowns
   },
 })
 
