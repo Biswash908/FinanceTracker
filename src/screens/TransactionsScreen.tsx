@@ -30,7 +30,6 @@ import FinancialSummary from "../components/FinancialSummary"
 import AccountSelector from "../components/AccountSelector"
 import TransactionFilters from "../components/TransactionFilters"
 import CustomScrollbar from "../components/CustomScrollbar"
-import BankManagementModal from "../components/BankManagementModal"
 
 // Services and Utils
 import { fetchTransactions, fetchAccounts, clearAllCache, clearTransactionsCache } from "../services/lean-api"
@@ -111,8 +110,6 @@ const TransactionsScreen = () => {
   const [entityId, setEntityId] = useState<string | null>(null)
   // Add state for transaction history sort dropdown
   const [transactionSortDropdownVisible, setTransactionSortDropdownVisible] = useState(false)
-  // Add state for bank management modal
-  const [showBankManagement, setShowBankManagement] = useState(false)
 
   // Refs
   const mainScrollViewRef = useRef(null)
@@ -285,7 +282,8 @@ const TransactionsScreen = () => {
   // Calculate financial summary with useMemo
   const financialSummary = useMemo(() => {
     console.log(`Calculating financial summary for ${filteredTransactions.length} transactions`)
-    return calculateFinancials(filteredTransactions)
+    // Make sure we're passing an array to calculateFinancials
+    return calculateFinancials(Array.isArray(filteredTransactions) ? filteredTransactions : [])
   }, [filteredTransactions])
 
   // Load accounts on initial render
@@ -637,20 +635,6 @@ const TransactionsScreen = () => {
     // The useEffect will trigger a reload
   }, [])
 
-  // Handle bank management
-  const handleManageBanks = useCallback(() => {
-    setShowBankManagement(true)
-  }, [])
-
-  const handleBankManagementClose = useCallback(() => {
-    setShowBankManagement(false)
-  }, [])
-
-  const handleBanksChanged = useCallback(() => {
-    // Reload accounts when banks are added/removed
-    loadAccounts()
-  }, [])
-
   // Handle cache clearing
   const handleClearCache = useCallback(async () => {
     try {
@@ -885,7 +869,6 @@ const TransactionsScreen = () => {
             accounts={accounts}
             selectedAccounts={selectedAccounts}
             onAccountsChange={handleAccountsChange}
-            onManageBanks={handleManageBanks}
           />
         )}
 
@@ -996,21 +979,19 @@ const TransactionsScreen = () => {
 
                 {transactionSortDropdownVisible && (
                   <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
-                    {transactionSortOptions.map(
-                      (option) =>
-                        (
-                        <TouchableOpacity
-                          key={option.key}
-                          style={[
-                            styles.dropdownItem,
-                            sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownItem,
-                            isDarkMode && { borderBottomColor: "#444" },
-                            sortBy === option.sortBy &&
-                              sortOrder === option.direction &&
-                              isDarkMode && { backgroundColor: "#3a3a3a" },
-                          ]}
-                          onPress={() => handleTransactionSortOptionChange(option)}
-                        >
+                    {transactionSortOptions.map((option) => (
+                      <TouchableOpacity
+                        key={option.key}
+                        style={[
+                          styles.dropdownItem,
+                          sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownItem,
+                          isDarkMode && { borderBottomColor: "#444" },
+                          sortBy === option.sortBy &&
+                            sortOrder === option.direction &&
+                            isDarkMode && { backgroundColor: "#3a3a3a" },
+                        ]}
+                        onPress={() => handleTransactionSortOptionChange(option)}
+                      >
                         <Text
                           style={[
                             styles.dropdownText,
@@ -1024,8 +1005,7 @@ const TransactionsScreen = () => {
                           <MaterialIcons name="check" size={16} color={isDarkMode ? "#3498db" : "#3498db"} />
                         )}
                       </TouchableOpacity>
-                        ),
-                    )}
+                    ))}
                   </View>
                 )}
               </View>
@@ -1057,17 +1037,14 @@ const TransactionsScreen = () => {
             </View>
           ) : (
             <View style={styles.flatListContainer} onLayout={handleLayout}>
-              {/* Export button inside transaction list - top right */}
+              {/* Export button inside transaction list - top right - Updated styling */}
               <TouchableOpacity
-                style={[
-                  styles.exportButtonInList,
-                  isExporting && styles.disabledButton,
-                  isDarkMode && { backgroundColor: "#2C5282" },
-                ]}
+                style={[styles.exportButtonInList, isExporting && styles.disabledButton]}
                 onPress={handleExportToCSV}
                 disabled={isExporting || sortedTransactions.length === 0}
               >
-                <MaterialIcons name="file-download" size={20} color="#FFF" />
+                <MaterialIcons name="file-download" size={16} color="#FFF" />
+                <Text style={styles.exportButtonText}>Export</Text>
               </TouchableOpacity>
 
               <Animated.FlatList
@@ -1163,13 +1140,6 @@ const TransactionsScreen = () => {
         {/* Bottom padding */}
         <View style={{ height: 20 }} />
       </ScrollView>
-
-      {/* Bank Management Modal */}
-      <BankManagementModal
-        visible={showBankManagement}
-        onClose={handleBankManagementClose}
-        onBanksChanged={handleBanksChanged}
-      />
 
       {/* Overlay to close dropdown when clicking outside */}
       {transactionSortDropdownVisible && (
@@ -1379,11 +1349,11 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 12,
     right: 12,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
     backgroundColor: "#3498db",
-    justifyContent: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    flexDirection: "row",
     alignItems: "center",
     zIndex: 100,
     shadowColor: "#000",
@@ -1391,6 +1361,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 5,
+    minWidth: 80,
+  },
+  exportButtonText: {
+    color: "#FFF",
+    fontSize: 12,
+    fontWeight: "600",
+    marginLeft: 4,
   },
   transactionBox: {
     height: screenHeight * 0.75,

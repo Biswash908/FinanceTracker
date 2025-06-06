@@ -1,6 +1,7 @@
 import { leanEntityService } from "./lean-entity-service"
 import { StorageService } from "./storage-service"
 import { authService } from "./auth-service"
+import { leanDisconnectService } from "./lean-disconnect-service"
 
 // Constants
 const API_BASE_URL = "https://sandbox.leantech.me"
@@ -546,22 +547,53 @@ export const fetchTransactionsMultiAccount = async (
 }
 
 /**
- * Remove a bank connection (entity)
+ * Remove a bank connection (entity) - Updated to use disconnect service
  */
-export const removeBankConnection = async (entityId: string): Promise<void> => {
+export const removeBankConnection = async (entityId: string): Promise<{ success: boolean; message: string }> => {
   try {
     console.log("Removing bank connection for entity:", entityId)
 
-    // Remove from entity service
-    await leanEntityService.removeEntity(entityId)
-
-    // Clear cache for this entity
-    await StorageService.clearEntityCache(entityId)
-
-    console.log("Bank connection removed successfully")
+    // Use the disconnect service to properly disconnect from Lean's servers
+    const result = await leanDisconnectService.disconnectEntity(entityId)
+    
+    return result
   } catch (error) {
     console.error("Error removing bank connection:", error)
-    throw error
+    return {
+      success: false,
+      message: `Failed to disconnect bank: ${error.message}`
+    }
+  }
+}
+
+/**
+ * Disconnect all banks for the current customer
+ */
+export const disconnectAllBanks = async (): Promise<{ success: boolean; message: string }> => {
+  try {
+    console.log("Disconnecting all banks")
+
+    // Get customer ID from storage
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default
+    const customerId = await AsyncStorage.getItem('lean_customer_id') || await AsyncStorage.getItem('customerId')
+    
+    if (!customerId) {
+      return {
+        success: false,
+        message: "No customer ID found"
+      }
+    }
+
+    // Use the disconnect service to disconnect all entities
+    const result = await leanDisconnectService.disconnectAllEntities(customerId)
+    
+    return result
+  } catch (error) {
+    console.error("Error disconnecting all banks:", error)
+    return {
+      success: false,
+      message: `Failed to disconnect all banks: ${error.message}`
+    }
   }
 }
 

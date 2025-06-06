@@ -21,15 +21,9 @@ interface AccountSelectorProps {
   accounts: Account[]
   selectedAccounts: string[]
   onAccountsChange: (accountIds: string[]) => void
-  onManageBanks?: () => void
 }
 
-const AccountSelector: React.FC<AccountSelectorProps> = ({
-  accounts,
-  selectedAccounts,
-  onAccountsChange,
-  onManageBanks,
-}) => {
+const AccountSelector: React.FC<AccountSelectorProps> = ({ accounts, selectedAccounts, onAccountsChange }) => {
   const { isDarkMode } = useTheme()
   const [expanded, setExpanded] = useState(true)
 
@@ -88,16 +82,6 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
         </View>
 
         <View style={styles.headerRight}>
-          {onManageBanks && (
-            <TouchableOpacity
-              style={[styles.manageBanksButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-              onPress={onManageBanks}
-            >
-              <MaterialIcons name="account-balance" size={16} color="#FFF" />
-              <Text style={styles.manageBanksText}>Manage</Text>
-            </TouchableOpacity>
-          )}
-
           <MaterialIcons
             name={expanded ? "expand-less" : "expand-more"}
             size={24}
@@ -114,7 +98,7 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({
               <MaterialIcons name="account-balance" size={48} color={isDarkMode ? "#555" : "#ccc"} />
               <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>No bank accounts connected</Text>
               <Text style={[styles.emptySubtext, isDarkMode && { color: "#777" }]}>
-                Connect your first bank account to get started
+                Connect your first bank account in Settings
               </Text>
             </View>
           ) : (
@@ -236,21 +220,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#666",
     marginTop: 2,
-  },
-  manageBanksButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#3498db",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    marginRight: 8,
-  },
-  manageBanksText: {
-    color: "#FFF",
-    fontSize: 12,
-    fontWeight: "500",
-    marginLeft: 4,
   },
   expandIcon: {
     marginLeft: 8,

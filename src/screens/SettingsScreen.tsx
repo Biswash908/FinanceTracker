@@ -2,24 +2,15 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, Alert, ActivityIndicator } from "react-native"
+import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView, Alert } from "react-native"
 import { useTheme } from "../context/ThemeContext"
 import { MaterialIcons } from "@expo/vector-icons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import { leanEntityService } from "../services/lean-entity-service"
 import LeanWebView from "../components/LeanWebView"
+import ConnectedBanksModal from "../components/ConnectedBanksModal"
 import { authService } from "../services/auth-service"
 import { leanCustomerService } from "../services/lean-customer-service"
-import { removeBankConnection } from "../services/lean-api"
-
-// Add an interface for entity info
-interface EntityInfo {
-  entityId: string
-  bankName?: string
-  userName?: string
-  connectedAt: number
-  accounts?: any[]
-}
 
 const SettingsScreen = () => {
   const { isDarkMode, toggleTheme } = useTheme()
@@ -33,14 +24,13 @@ const SettingsScreen = () => {
   const [customerId, setCustomerId] = useState(null)
   const [bankConnected, setBankConnected] = useState(false)
   const [entityId, setEntityId] = useState<string | null>(null)
+  const [connectedBanksCount, setConnectedBanksCount] = useState(0)
 
   // State for LeanWebView
   const [showLeanWebView, setShowLeanWebView] = useState(false)
 
-  // State for managing multiple entities
-  const [entities, setEntities] = useState<EntityInfo[]>([])
-  const [removingEntityId, setRemovingEntityId] = useState<string | null>(null)
-  const [loadingEntities, setLoadingEntities] = useState(true)
+  // State for Connected Banks Modal
+  const [showConnectedBanksModal, setShowConnectedBanksModal] = useState(false)
 
   // Load settings on mount
   useEffect(() => {
@@ -67,6 +57,9 @@ const SettingsScreen = () => {
         } else {
           setBankConnected(false)
         }
+
+        // Load connected banks count
+        await loadConnectedBanksCount()
       } catch (error) {
         console.error("Error loading settings:", error)
       }
@@ -75,29 +68,14 @@ const SettingsScreen = () => {
     loadSettings()
   }, [])
 
-  // Load all entities when the component renders
-  useEffect(() => {
-    loadEntities()
-  }, [])
-
-  // Function to load all entities
-  const loadEntities = async () => {
+  // Function to load connected banks count
+  const loadConnectedBanksCount = async () => {
     try {
-      setLoadingEntities(true)
-      const allEntities = await leanEntityService.getAllEntities()
-      setEntities(allEntities)
-
-      // Update bankConnected state based on entities
-      setBankConnected(allEntities.length > 0)
-
-      // If we have entities, update the entityId state with the first one
-      if (allEntities.length > 0) {
-        setEntityId(allEntities[0].entityId)
-      }
+      const entities = await leanEntityService.getAllEntities()
+      setConnectedBanksCount(entities.length)
+      setBankConnected(entities.length > 0)
     } catch (error) {
-      console.error("Error loading entities:", error)
-    } finally {
-      setLoadingEntities(false)
+      console.error("Error loading connected banks count:", error)
     }
   }
 
@@ -127,6 +105,9 @@ const SettingsScreen = () => {
       if (storedEntityId) {
         setEntityId(storedEntityId)
       }
+
+      // Reload connected banks count
+      await loadConnectedBanksCount()
     } else if (status === "ERROR") {
       Alert.alert("Error", message || "Error connecting bank account")
     } else if (status === "CANCELLED") {
@@ -135,40 +116,14 @@ const SettingsScreen = () => {
     }
   }
 
-  // Disconnect bank account
-  const disconnectBankAccount = async () => {
-    Alert.alert(
-      "Disconnect Bank Account",
-      "Are you sure you want to disconnect your bank account? This will remove all your financial data from the app.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Disconnect",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              setIsLoading(true)
+  // Handle Connected Banks Modal close
+  const handleConnectedBanksModalClose = () => {
+    setShowConnectedBanksModal(false)
+  }
 
-              // Clear all bank-related data
-              await leanEntityService.clearEntityData()
-              await AsyncStorage.multiRemove(["bankConnected", "customerId"])
-
-              // Reset state
-              setBankConnected(false)
-              setEntityId(null)
-              setCustomerId(null)
-
-              Alert.alert("Success", "Bank account disconnected successfully")
-            } catch (error) {
-              console.error("Error disconnecting bank:", error)
-              Alert.alert("Error", "Failed to disconnect bank account")
-            } finally {
-              setIsLoading(false)
-            }
-          },
-        },
-      ],
-    )
+  // Handle banks changed (when banks are added/removed)
+  const handleBanksChanged = async () => {
+    await loadConnectedBanksCount()
   }
 
   const handleLogout = async () => {
@@ -176,6 +131,7 @@ const SettingsScreen = () => {
       { text: "Cancel", style: "cancel" },
       {
         text: "Logout",
+        style: "destructive",
         onPress: async () => {
           setIsLoading(true)
           try {
@@ -208,8 +164,10 @@ const SettingsScreen = () => {
     ])
   }
 
-  // Temporarily disabled dark mode toggle
-  const handleDarkModeToggle = () => {}
+  // Handle dark mode toggle - FIXED
+  const handleDarkModeToggle = () => {
+    toggleTheme()
+  }
 
   const renderSettingItem = (
     icon: string,
@@ -233,144 +191,6 @@ const SettingsScreen = () => {
       {action}
     </TouchableOpacity>
   )
-
-  // Update the banking section in the component to support multiple banks
-  // Replace the renderBankConnectionSetting function with this updated version
-  const renderBankConnectionSetting = () => {
-    // Function to remove a specific bank connection
-    const handleRemoveBank = (entity: EntityInfo) => {
-      Alert.alert(
-        "Disconnect Bank Account",
-        `Are you sure you want to disconnect ${entity.bankName || "this bank account"}? This will remove all associated financial data.`,
-        [
-          { text: "Cancel", style: "cancel" },
-          {
-            text: "Disconnect",
-            style: "destructive",
-            onPress: async () => {
-              try {
-                setRemovingEntityId(entity.entityId)
-
-                // Remove the bank connection
-                await removeBankConnection(entity.entityId)
-
-                // Reload entities
-                await loadEntities()
-
-                // If no entities left, reset bankConnected and entityId
-                if (entities.length === 0) {
-                  setBankConnected(false)
-                  setEntityId(null)
-                }
-
-                Alert.alert("Success", "Bank account disconnected successfully")
-              } catch (error) {
-                console.error("Error removing bank:", error)
-                Alert.alert("Error", "Failed to disconnect bank account")
-              } finally {
-                setRemovingEntityId(null)
-              }
-            },
-          },
-        ],
-      )
-    }
-
-    // If loading entities, show loading indicator
-    if (loadingEntities) {
-      return (
-        <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
-          <View style={[styles.settingIcon, isDarkMode && { backgroundColor: "#333" }]}>
-            <MaterialIcons name="account-balance" size={24} color="#3498db" />
-          </View>
-          <View style={styles.settingTextContainer}>
-            <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>Bank Accounts</Text>
-            <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>
-              Loading bank connections...
-            </Text>
-          </View>
-          <ActivityIndicator size="small" color="#3498db" />
-        </View>
-      )
-    }
-
-    // If no banks connected, show connect button
-    if (entities.length === 0) {
-      return (
-        <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
-          <View style={[styles.settingIcon, isDarkMode && { backgroundColor: "#333" }]}>
-            <MaterialIcons name="account-balance-wallet" size={24} color="#3498db" />
-          </View>
-          <View style={styles.settingTextContainer}>
-            <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>Bank Accounts</Text>
-            <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>
-              Link your bank accounts to track transactions
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.connectButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-            onPress={connectBankAccount}
-          >
-            <Text style={styles.connectButtonText}>Connect</Text>
-          </TouchableOpacity>
-        </View>
-      )
-    }
-
-    // If banks are connected, show list of banks with individual disconnect buttons
-    return (
-      <>
-        <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
-          <View style={[styles.settingIcon, isDarkMode && { backgroundColor: "#333" }]}>
-            <MaterialIcons name="account-balance" size={24} color="#27ae60" />
-          </View>
-          <View style={styles.settingTextContainer}>
-            <Text style={[styles.settingTitle, isDarkMode && { color: "#FFF" }]}>Bank Accounts</Text>
-            <Text style={[styles.settingDescription, isDarkMode && { color: "#AAA" }]}>
-              {entities.length} {entities.length === 1 ? "bank" : "banks"} connected and syncing data
-            </Text>
-          </View>
-          <TouchableOpacity
-            style={[styles.connectButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-            onPress={connectBankAccount}
-          >
-            <Text style={styles.connectButtonText}>Add Bank</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* List of connected banks */}
-        {entities.map((entity) => (
-          <View
-            key={entity.entityId}
-            style={[styles.bankItem, isDarkMode && { borderBottomColor: "#444", backgroundColor: "#1E1E1E" }]}
-          >
-            <View style={styles.bankItemContent}>
-              <Text style={[styles.bankName, isDarkMode && { color: "#FFF" }]}>
-                {entity.bankName || "Connected Bank"}
-              </Text>
-              <Text style={[styles.bankUser, isDarkMode && { color: "#AAA" }]}>{entity.userName || "User"}</Text>
-              <Text style={[styles.entityIdText, isDarkMode && { color: "#888" }]}>Entity ID: {entity.entityId}</Text>
-            </View>
-            <TouchableOpacity
-              style={[
-                styles.disconnectButton,
-                removingEntityId === entity.entityId && { opacity: 0.7 },
-                isDarkMode && { backgroundColor: "#8B0000" },
-              ]}
-              onPress={() => handleRemoveBank(entity)}
-              disabled={removingEntityId === entity.entityId}
-            >
-              {removingEntityId === entity.entityId ? (
-                <ActivityIndicator size="small" color="#FFF" />
-              ) : (
-                <Text style={styles.connectButtonText}>Disconnect</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        ))}
-      </>
-    )
-  }
 
   return (
     <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
@@ -403,7 +223,24 @@ const SettingsScreen = () => {
       <View style={[styles.section, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
         <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Banking</Text>
 
-        {renderBankConnectionSetting()}
+        {/* Connect Bank Account */}
+        {renderSettingItem(
+          "account-balance-wallet",
+          "Connect Bank Account",
+          "Link a new bank account to track transactions",
+          <MaterialIcons name="chevron-right" size={24} color={isDarkMode ? "#AAA" : "#999"} />,
+          connectBankAccount,
+        )}
+
+        {/* Connected Banks */}
+        {connectedBanksCount > 0 &&
+          renderSettingItem(
+            "account-balance",
+            "Connected Banks",
+            `${connectedBanksCount} ${connectedBanksCount === 1 ? "bank" : "banks"} connected`,
+            <MaterialIcons name="chevron-right" size={24} color={isDarkMode ? "#AAA" : "#999"} />,
+            () => setShowConnectedBanksModal(true),
+          )}
 
         {customerId && (
           <View style={[styles.settingItem, isDarkMode && { borderBottomColor: "#444" }]}>
@@ -426,11 +263,11 @@ const SettingsScreen = () => {
           "Dark Mode",
           "Toggle dark mode on or off",
           <Switch
-            value={false}
+            value={isDarkMode}
             onValueChange={handleDarkModeToggle}
             trackColor={{ false: "#767577", true: "#81b0ff" }}
-            thumbColor="#f4f3f4"
-            disabled={true}
+            thumbColor={isDarkMode ? "#3498db" : "#f4f3f4"}
+            disabled={false}
           />,
           undefined,
         )}
@@ -504,6 +341,13 @@ const SettingsScreen = () => {
 
       {/* Lean WebView Modal */}
       {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
+
+      {/* Connected Banks Modal */}
+      <ConnectedBanksModal
+        visible={showConnectedBanksModal}
+        onClose={handleConnectedBanksModalClose}
+        onBanksChanged={handleBanksChanged}
+      />
     </ScrollView>
   )
 }
@@ -607,62 +451,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#999",
   },
-  connectButton: {
-    backgroundColor: "#3498db",
-    paddingHorizontal: 15,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  disconnectButton: {
-    backgroundColor: "#e74c3c",
-  },
-  connectButtonText: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "500",
-  },
   settingTextContainer: {
     flex: 1,
-  },
-  entityIdText: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 4,
-    fontFamily: "monospace",
-  },
-  bankItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    marginLeft: 36,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f0f0f0",
-    backgroundColor: "#f9f9f9",
-    borderRadius: 8,
-    marginBottom: 8,
-  },
-  bankItemContent: {
-    flex: 1,
-  },
-  bankName: {
-    fontSize: 15,
-    fontWeight: "500",
-    color: "#333",
-  },
-  bankUser: {
-    fontSize: 13,
-    color: "#666",
-    marginTop: 2,
-  },
-  disconnectButton: {
-    backgroundColor: "#e74c3c",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    minWidth: 90,
-    alignItems: "center",
   },
 })
 

@@ -10,10 +10,12 @@ const IDENTITY_CACHE_EXPIRY = 24 * 60 * 60 * 1000
 
 interface IdentityData {
   full_name?: string
-  email?: string
-  phone_number?: string
-  date_of_birth?: string
-  address?: any
+  email_address?: string
+  mobile_number?: string
+  birth_date?: string
+  address?: string
+  national_identity_number?: string
+  gender?: string
   [key: string]: any
 }
 
@@ -23,6 +25,7 @@ interface EntityInfo {
   userName?: string
   connectedAt: number
   accounts?: any[]
+  identityData?: IdentityData
 }
 
 class LeanEntityService {
@@ -56,6 +59,55 @@ class LeanEntityService {
     } catch (error) {
       console.error("Error storing entity ID:", error)
       throw error
+    }
+  }
+
+  /**
+   * Store identity data for an entity
+   */
+  async storeIdentityData(entityId: string, identityData: IdentityData): Promise<void> {
+    try {
+      const entities = await this.getAllEntities()
+      const entityIndex = entities.findIndex((e) => e.entityId === entityId)
+
+      if (entityIndex >= 0) {
+        // Update the entity with identity data
+        entities[entityIndex].identityData = identityData
+
+        // Also update the userName if we have full_name
+        if (identityData.full_name) {
+          entities[entityIndex].userName = identityData.full_name
+        }
+
+        await AsyncStorage.setItem(LEAN_ENTITIES_KEY, JSON.stringify(entities))
+        console.log("Stored identity data for entity:", entityId, identityData)
+      }
+
+      // Also cache the identity data separately
+      await this.cacheIdentity(entityId, identityData)
+    } catch (error) {
+      console.error("Error storing identity data:", error)
+    }
+  }
+
+  /**
+   * Get identity data for an entity
+   */
+  async getIdentityData(entityId: string): Promise<IdentityData | null> {
+    try {
+      // First try to get from entity info
+      const entities = await this.getAllEntities()
+      const entity = entities.find((e) => e.entityId === entityId)
+
+      if (entity && entity.identityData) {
+        return entity.identityData
+      }
+
+      // Fallback to cached identity
+      return await this.getCachedIdentity(entityId)
+    } catch (error) {
+      console.error("Error getting identity data:", error)
+      return null
     }
   }
 
@@ -181,13 +233,16 @@ class LeanEntityService {
       const data = await response.json()
       console.log("Identity data received for entity:", entityId, data)
 
-      if (data.payload) {
-        // Cache the identity data
+      // Check for the correct response structure with status: "OK" and payload
+      if (data.status === "OK" && data.payload) {
+        // Cache the identity data from the payload
         await this.cacheIdentity(entityId, data.payload)
+        await this.storeIdentityData(entityId, data.payload)
         return data.payload
+      } else {
+        console.warn("Unexpected identity response structure:", data)
+        return null
       }
-
-      return null
     } catch (error) {
       console.error("Error fetching identity for entity:", entityId, error)
       throw error

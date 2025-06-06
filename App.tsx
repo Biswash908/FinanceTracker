@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { SafeAreaProvider } from "react-native-safe-area-context"
-import { NavigationContainer } from "@react-navigation/native"
+import { NavigationContainer, DefaultTheme, DarkTheme } from "@react-navigation/native"
 import { createStackNavigator } from "@react-navigation/stack"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { MaterialIcons } from "@expo/vector-icons"
@@ -20,7 +20,7 @@ import OnboardingScreen from "./src/screens/OnboardingScreen"
 import LeanWebView from "./src/components/LeanWebView"
 
 // Context and Services
-import { ThemeProvider } from "./src/context/ThemeContext"
+import { ThemeProvider, useTheme } from "./src/context/ThemeContext"
 import { authService } from "./src/services/auth-service"
 import { leanCustomerService } from "./src/services/lean-customer-service"
 import { leanEntityService } from "./src/services/lean-entity-service"
@@ -29,8 +29,10 @@ import { leanEntityService } from "./src/services/lean-entity-service"
 const Stack = createStackNavigator()
 const Tab = createBottomTabNavigator()
 
-// Main Tab Navigator
+// Main Tab Navigator - Updated to use theme
 const TabNavigator = () => {
+  const { isDarkMode } = useTheme()
+  
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -48,7 +50,11 @@ const TabNavigator = () => {
           return <MaterialIcons name={iconName} size={size} color={color} />
         },
         tabBarActiveTintColor: "#3498db",
-        tabBarInactiveTintColor: "gray",
+        tabBarInactiveTintColor: isDarkMode ? "#888" : "gray",
+        tabBarStyle: {
+          backgroundColor: isDarkMode ? "#1E1E1E" : "#fff",
+          borderTopColor: isDarkMode ? "#333" : "#e0e0e0",
+        },
         headerShown: false,
       })}
     >
@@ -56,6 +62,36 @@ const TabNavigator = () => {
       <Tab.Screen name="Transactions" component={TransactionsScreen} />
       <Tab.Screen name="Settings" component={SettingsScreen} />
     </Tab.Navigator>
+  )
+}
+
+// Navigation Container with theme - Fixed to use built-in themes
+const ThemedNavigationContainer = ({ children }) => {
+  const { isDarkMode } = useTheme()
+  
+  // Use the built-in themes instead of creating custom ones
+  // This ensures all required properties are present
+  const theme = isDarkMode ? {
+    ...DarkTheme,
+    colors: {
+      ...DarkTheme.colors,
+      primary: '#3498db',
+      background: '#121212',
+      card: '#1E1E1E',
+      border: '#333',
+    }
+  } : {
+    ...DefaultTheme,
+    colors: {
+      ...DefaultTheme.colors,
+      primary: '#3498db',
+    }
+  }
+
+  return (
+    <NavigationContainer theme={theme}>
+      {children}
+    </NavigationContainer>
   )
 }
 
@@ -225,7 +261,7 @@ const App = () => {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <NavigationContainer>
+        <ThemedNavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
             {showOnboarding ? (
               <Stack.Screen name="Onboarding">
@@ -245,7 +281,7 @@ const App = () => {
               </Stack.Screen>
             )}
           </Stack.Navigator>
-        </NavigationContainer>
+        </ThemedNavigationContainer>
       </ThemeProvider>
     </SafeAreaProvider>
   )

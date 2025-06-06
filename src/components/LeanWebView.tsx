@@ -9,6 +9,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage"
 import { leanCustomerService } from "../services/lean-customer-service"
 import { leanEntityService } from "../services/lean-entity-service"
 import { fetchAccounts } from "../services/lean-api"
+import { authService } from "../services/auth-service"
 
 interface LeanWebViewProps {
   onClose: (status: string, message?: string, entityId?: string) => void
@@ -146,29 +147,99 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
     }
   }
 
+  // Function to fetch identity data and get real name using the app token
+  const fetchIdentityAndGetName = async (entityId: string): Promise<{ bankName: string; userName: string }> => {
+    try {
+      console.log("Fetching identity data for entity:", entityId)
+
+      // Get the app token for the identity API call
+      const appToken = await authService.getToken()
+
+      // Fetch identity data using the identity endpoint with app token
+      const response = await fetch("https://sandbox.leantech.me/data/v1/identity", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${appToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          entity_id: entityId,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorText = await response.text()
+        console.warn(`Failed to fetch identity: ${response.status} ${errorText}`)
+        return { bankName: "Demo Bank", userName: "Demo User" }
+      }
+
+      const data = await response.json()
+      console.log("Identity data received:", JSON.stringify(data, null, 2))
+
+      let userName = "Demo User"
+      let bankName = "Demo Bank"
+
+      // Check if we have the expected response structure
+      if (data.status === "OK" && data.payload) {
+        const payload = data.payload
+
+        // Extract real name from identity data - prioritize full_name
+        if (payload.full_name) {
+          userName = payload.full_name
+          console.log("Using full_name:", userName)
+        } else if (payload.first_name && payload.last_name) {
+          userName = `${payload.first_name} ${payload.last_name}`
+          console.log("Using first_name + last_name:", userName)
+        } else if (payload.first_name) {
+          userName = payload.first_name
+          console.log("Using first_name only:", userName)
+        }
+
+        // Try to get bank name from identity data if available
+        if (payload.bank_name) {
+          bankName = payload.bank_name
+        } else if (payload.institution_name) {
+          bankName = payload.institution_name
+        } else {
+          // Default bank name for sandbox
+          bankName = "Lean Mock Bank"
+        }
+
+        console.log("Extracted identity info:", { userName, bankName })
+
+        // Store the identity data in the entity service for future use
+        await leanEntityService.storeIdentityData(entityId, payload)
+      } else {
+        console.warn("Unexpected identity response structure:", data)
+      }
+
+      return { bankName, userName }
+    } catch (error) {
+      console.error("Error fetching identity data:", error)
+      return { bankName: "Demo Bank", userName: "Demo User" }
+    }
+  }
+
   // Function to create detailed success message
-  const createSuccessMessage = async (entityId: string): Promise<string> => {
+  const createSuccessMessage = async (entityId: string, userName: string, bankName: string): Promise<string> => {
     try {
       console.log("Creating detailed success message for entity:", entityId)
 
-      // Fetch accounts to get bank and account information
+      // Fetch accounts to get account information
       const accounts = await fetchAccounts()
 
       if (accounts && accounts.length > 0) {
-        // Get unique bank names (in sandbox, this might be "Mock Bank" or similar)
-        const bankNames = [
-          ...new Set(accounts.map((account) => account.bank_name || account.institution_name || "Mock Bank")),
-        ]
-        const bankName = bankNames[0] || "Mock Bank"
+        // Filter accounts for this entity
+        const entityAccounts = accounts.filter((account) => account.entityId === entityId)
 
         // Get account names/numbers
-        const accountNames = accounts
+        const accountNames = entityAccounts
           .map(
             (account) => account.name || account.account_name || `Account ${account.account_id?.slice(-4) || "XXXX"}`,
           )
           .slice(0, 3) // Limit to first 3 accounts for readability
 
-        let message = `Connection to ${bankName} successful!`
+        let message = `Welcome ${userName}!\n\nConnection to ${bankName} successful!`
 
         if (accountNames.length > 0) {
           if (accountNames.length === 1) {
@@ -176,7 +247,7 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
           } else if (accountNames.length <= 3) {
             message += `\n\nAccounts connected: ${accountNames.join(", ")}`
           } else {
-            message += `\n\nAccounts connected: ${accountNames.slice(0, 2).join(", ")} and ${accounts.length - 2} more`
+            message += `\n\nAccounts connected: ${accountNames.slice(0, 2).join(", ")} and ${entityAccounts.length - 2} more`
           }
         }
 
@@ -184,11 +255,11 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
 
         return message
       } else {
-        return "Bank connection successful! Your financial data is now available in the app."
+        return `Welcome ${userName}!\n\nBank connection successful! Your financial data is now available in the app.`
       }
     } catch (error) {
       console.error("Error creating detailed success message:", error)
-      return "Bank connection successful! Your financial data is now available in the app."
+      return `Welcome ${userName}!\n\nBank connection successful! Your financial data is now available in the app.`
     }
   }
 
@@ -353,39 +424,14 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
             if (entityId) {
               console.log("Successfully retrieved entity ID:", entityId)
 
-              // Default values for sandbox environment
-              let userName = "Demo User"
-              let bankName = "Demo Bank"
+              // Fetch identity data to get real name using the app token
+              const { bankName, userName } = await fetchIdentityAndGetName(entityId)
 
-              // Try to extract bank name from response if available
-              if (response.bank_name) {
-                bankName = response.bank_name
-              } else if (response.institution_name) {
-                bankName = response.institution_name
-              }
-
-              // Try to extract user name from response if available
-              if (response.user_name) {
-                userName = response.user_name
-              } else if (response.customer_name) {
-                userName = response.customer_name
-              }
-
-              // Store the entity ID with additional information for multi-bank support
+              // Store the entity ID with real identity information
               await leanEntityService.storeEntityId(entityId, bankName, userName)
 
-              // Try to fetch and cache identity data (optional)
-              try {
-                await leanEntityService.fetchIdentity(entityId, accessToken)
-                console.log("Identity data fetched and cached successfully")
-              } catch (identityError) {
-                // Identity fetch is optional and may not be available in sandbox
-                // Silently continue without logging the error
-                console.log("Identity data not available (this is normal in sandbox environment)")
-              }
-
-              // Create detailed success message
-              const detailedMessage = await createSuccessMessage(entityId)
+              // Create detailed success message with the real user name
+              const detailedMessage = await createSuccessMessage(entityId, userName, bankName)
               onClose("SUCCESS", detailedMessage, entityId)
             } else {
               console.warn("Could not retrieve entity ID after connection")

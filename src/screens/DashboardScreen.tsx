@@ -9,6 +9,7 @@ import { useFocusEffect } from "@react-navigation/native"
 // Components
 import BalanceCard from "../components/BalanceCard"
 import CategoryChart from "../components/CategoryChart"
+import LeanWebView from "../components/LeanWebView"
 
 // Services and Utils
 import { fetchTransactions, fetchAccounts, clearTransactionsCache } from "../services/lean-api"
@@ -27,6 +28,7 @@ const DashboardScreen = () => {
   const [entityId, setEntityId] = useState<string | null>(null)
   const [accountId, setAccountId] = useState<string | null>(ACCOUNT_ID || null)
   const [lastRefresh, setLastRefresh] = useState(Date.now())
+  const [showLeanWebView, setShowLeanWebView] = useState(false)
 
   // Check for bank connection when screen comes into focus
   useFocusEffect(
@@ -77,14 +79,16 @@ const DashboardScreen = () => {
     }
   }
 
-  // Set up periodic checking for entity ID (for when user connects bank)
+  // Periodically check bank connection only if no entityId is found
   useEffect(() => {
+    if (entityId) return
+
     const interval = setInterval(() => {
       checkBankConnection()
     }, 3000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [entityId])
 
   // Get date range based on selected time range
   const getDateRange = () => {
@@ -155,6 +159,22 @@ const DashboardScreen = () => {
     setLastRefresh(Date.now())
   }
 
+  // Handle Connect Bank button
+  const handleConnectBank = () => {
+    setShowLeanWebView(true)
+  }
+
+  // Handle Lean WebView close
+  const handleLeanWebViewClose = async (status: string, message?: string, entityId?: string) => {
+    setShowLeanWebView(false)
+
+    if (status === "SUCCESS") {
+      // Reload the dashboard data
+      await checkBankConnection()
+      setLastRefresh(Date.now())
+    }
+  }
+
   // Format category data for chart
   const categoryData = Object.entries(categoryTotals)
     .filter(([_, amount]) => amount > 0)
@@ -182,15 +202,18 @@ const DashboardScreen = () => {
         <View style={[styles.connectionPrompt, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
           <Text style={[styles.connectionTitle, isDarkMode && { color: "#FFF" }]}>Connect Your Bank Account</Text>
           <Text style={[styles.connectionText, isDarkMode && { color: "#AAA" }]}>
-            To view your financial dashboard, please connect your bank account in the Settings tab.
+            To view your financial dashboard, please connect your bank account to get started.
           </Text>
           <TouchableOpacity
             style={[styles.connectionButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-            onPress={handleRefresh}
+            onPress={handleConnectBank}
           >
-            <Text style={styles.connectionButtonText}>Try Again</Text>
+            <Text style={styles.connectionButtonText}>Connect Bank</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Lean WebView Modal */}
+        {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
       </ScrollView>
     )
   }
@@ -324,6 +347,9 @@ const DashboardScreen = () => {
           </View>
         </>
       )}
+
+      {/* Lean WebView Modal */}
+      {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
     </ScrollView>
   )
 }
@@ -356,7 +382,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 26,
+    marginTop: 16,
     marginBottom: 16,
   },
   title: {
