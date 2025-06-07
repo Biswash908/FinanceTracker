@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   scrollbarContainer: {
     position: "absolute",
     right: 0,
-    width: 20,
+    width: 10,
     backgroundColor: "rgba(0,0,0,0.03)",
     borderTopLeftRadius: 10,
     borderBottomLeftRadius: 10,
@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
   },
   scrollbarTrack: {
     flex: 1,
-    width: 20,
+    width: 10,
     alignItems: "center",
     justifyContent: "flex-start",
   },

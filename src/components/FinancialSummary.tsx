@@ -20,6 +20,9 @@ interface FinancialSummaryProps {
   categoryTotals: Record<string, number>
   pendingAmount?: number
   currency?: string
+  inflowCategories?: Record<string, number>
+  expenseCategories?: Record<string, number>
+  selectedType?: string[] // NEW: Add this prop to track selected transaction type
 }
 
 const FinancialSummary: React.FC<FinancialSummaryProps> = ({
@@ -29,6 +32,9 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
   categoryTotals,
   pendingAmount = 0,
   currency = "AED",
+  inflowCategories = {},
+  expenseCategories = {},
+  selectedType = ["All"], // NEW: Default to "All"
 }) => {
   const [expanded, setExpanded] = useState(true)
   const { isDarkMode } = useTheme()
@@ -69,10 +75,9 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
     return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`
   }
 
-  // Sort categories based on current sort option
-  const sortedCategories = Object.entries(categoryTotals)
-    .filter(([category, amount]) => amount > 0 && category.toLowerCase() !== "income")
-    .sort(([categoryA, amountA], [categoryB, amountB]) => {
+  // Sort function for categories
+  const sortCategories = (categories: [string, number][]) => {
+    return categories.sort(([categoryA, amountA], [categoryB, amountB]) => {
       switch (sortOption) {
         case "amount_lowest":
           return amountA - amountB
@@ -86,6 +91,25 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
           return amountB - amountA
       }
     })
+  }
+
+  // NEW: Determine what sections to show based on selected transaction type
+  const showInflowSection = selectedType.includes("All") || selectedType.includes("Inflow")
+  const showExpenseSection = selectedType.includes("All") || selectedType.includes("Expense")
+
+  // Get sorted inflow categories - ONLY show if inflow section should be visible
+  const sortedInflowCategories = showInflowSection
+    ? sortCategories(Object.entries(inflowCategories).filter(([category, amount]) => amount > 0))
+    : []
+
+  // Get sorted expense categories - ONLY show if expense section should be visible
+  const expenseData =
+    expenseCategories && Object.keys(expenseCategories).length > 0 ? expenseCategories : categoryTotals
+  const sortedExpenseCategories = showExpenseSection
+    ? sortCategories(
+        Object.entries(expenseData).filter(([category, amount]) => amount > 0 && category.toLowerCase() !== "income"),
+      )
+    : []
 
   // Handle sort option selection
   const handleSortSelect = (option: SortOption) => {
@@ -96,6 +120,8 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
   // Get category color
   const getCategoryColor = (category: string): string => {
     const categoryColors = {
+      deposit: "#2196F3",
+      income: "#4CAF50",
       food: "#FF5733",
       transport: "#33A8FF",
       utilities: "#33FFC1",
@@ -167,68 +193,107 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
             </Text>
           </View>
 
-          <View style={styles.sectionTitleRow}>
-            <Text style={[styles.sectionTitle, isDarkMode && { color: "#EEE" }]}>Expense Categories</Text>
-            <View style={styles.sortContainer}>
-              <TouchableOpacity style={styles.sortButton} onPress={() => setDropdownVisible(!dropdownVisible)}>
-                <MaterialIcons name="sort" size={18} color={isDarkMode ? "#DDD" : "#555"} />
-              </TouchableOpacity>
+          {/* NEW: Inflow Categories Section - Only show if inflow should be visible */}
+          {showInflowSection && (
+            <>
+              <View style={styles.sectionTitleRow}>
+                <Text style={[styles.sectionTitle, isDarkMode && { color: "#EEE" }]}>Inflow Categories</Text>
+                <View style={styles.sortContainer}>
+                  <TouchableOpacity style={styles.sortButton} onPress={() => setDropdownVisible(!dropdownVisible)}>
+                    <MaterialIcons name="sort" size={18} color={isDarkMode ? "#DDD" : "#555"} />
+                  </TouchableOpacity>
 
-              {dropdownVisible && (
-                <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
-                  {sortOptions.map((option) => (
-                    <TouchableOpacity
-                      key={option}
-                      style={[
-                        styles.dropdownItem,
-                        sortOption === option && styles.selectedDropdownItem,
-                        isDarkMode && { borderBottomColor: "#444" },
-                        sortOption === option && isDarkMode && { backgroundColor: "#3a3a3a" },
-                      ]}
-                      onPress={() => handleSortSelect(option)}
-                    >
-                      <Text
-                        style={[
-                          styles.dropdownText,
-                          sortOption === option && styles.selectedDropdownText,
-                          isDarkMode && { color: "#DDD" },
-                        ]}
-                      >
-                        {getSortOptionName(option)}
-                      </Text>
-                      {sortOption === option && (
-                        <MaterialIcons name="check" size={16} color={isDarkMode ? "#3498db" : "#3498db"} />
-                      )}
-                    </TouchableOpacity>
-                  ))}
+                  {dropdownVisible && (
+                    <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
+                      {sortOptions.map((option) => (
+                        <TouchableOpacity
+                          key={option}
+                          style={[
+                            styles.dropdownItem,
+                            sortOption === option && styles.selectedDropdownItem,
+                            isDarkMode && { borderBottomColor: "#444" },
+                            sortOption === option && isDarkMode && { backgroundColor: "#3a3a3a" },
+                          ]}
+                          onPress={() => handleSortSelect(option)}
+                        >
+                          <Text
+                            style={[
+                              styles.dropdownText,
+                              sortOption === option && styles.selectedDropdownText,
+                              isDarkMode && { color: "#DDD" },
+                            ]}
+                          >
+                            {getSortOptionName(option)}
+                          </Text>
+                          {sortOption === option && (
+                            <MaterialIcons name="check" size={16} color={isDarkMode ? "#3498db" : "#3498db"} />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
-          </View>
-
-          {sortedCategories.length > 0 ? (
-            sortedCategories.map(([category, amount]) => (
-              <View key={category} style={styles.categoryRow}>
-                <View style={styles.categoryNameContainer}>
-                  <View
-                    style={[
-                      styles.categoryColorDot,
-                      {
-                        backgroundColor: getCategoryColor(category),
-                      },
-                    ]}
-                  />
-                  <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>
-                    {category.charAt(0).toUpperCase() + category.slice(1)}
-                  </Text>
-                </View>
-                <Text style={styles.categoryAmount}>-{formatCurrency(amount, currency)}</Text>
               </View>
-            ))
-          ) : (
-            <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
-              No expense data available for this period.
-            </Text>
+
+              {sortedInflowCategories.length > 0 ? (
+                sortedInflowCategories.map(([category, amount]) => (
+                  <View key={`inflow-${category}`} style={styles.categoryRow}>
+                    <View style={styles.categoryNameContainer}>
+                      <View
+                        style={[
+                          styles.categoryColorDot,
+                          {
+                            backgroundColor: getCategoryColor(category),
+                          },
+                        ]}
+                      />
+                      <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>
+                        {category.charAt(0).toUpperCase() + category.slice(1)}
+                      </Text>
+                    </View>
+                    <Text style={[styles.categoryAmount, styles.incomeText]}>+{formatCurrency(amount, currency)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+                  No inflow data available for this period.
+                </Text>
+              )}
+            </>
+          )}
+
+          {/* NEW: Expense Categories Section - Only show if expense should be visible */}
+          {showExpenseSection && (
+            <>
+              <View style={[styles.sectionTitleRow, { marginTop: showInflowSection ? 20 : 0 }]}>
+                <Text style={[styles.sectionTitle, isDarkMode && { color: "#EEE" }]}>Expense Categories</Text>
+              </View>
+
+              {sortedExpenseCategories.length > 0 ? (
+                sortedExpenseCategories.map(([category, amount]) => (
+                  <View key={`expense-${category}`} style={styles.categoryRow}>
+                    <View style={styles.categoryNameContainer}>
+                      <View
+                        style={[
+                          styles.categoryColorDot,
+                          {
+                            backgroundColor: getCategoryColor(category),
+                          },
+                        ]}
+                      />
+                      <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>
+                        {category.charAt(0).toUpperCase() + category.slice(1)}
+                      </Text>
+                    </View>
+                    <Text style={styles.categoryAmount}>-{formatCurrency(amount, currency)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+                  No expense data available for this period.
+                </Text>
+              )}
+            </>
           )}
         </View>
       )}
@@ -244,7 +309,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
 const styles = StyleSheet.create({
   container: {
     borderRadius: 12,
-    overflow: "visible",
+    overflow: "visible", // Keep this
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -253,7 +318,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     borderWidth: 1,
     borderColor: "#eee",
-    zIndex: 1,
+    zIndex: 1000, // Increase this significantly
   },
   header: {
     flexDirection: "row",
@@ -324,7 +389,7 @@ const styles = StyleSheet.create({
   },
   sortContainer: {
     position: "relative",
-    zIndex: 10,
+    zIndex: 10000, // Increase this significantly
   },
   sortButton: {
     padding: 4,
@@ -341,9 +406,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.15,
     shadowRadius: 4,
-    elevation: 20,
+    elevation: 50, // Increase this significantly
     minWidth: 170,
-    zIndex: 1000,
+    zIndex: 10001, // Increase this significantly
   },
   dropdownItem: {
     flexDirection: "row",
@@ -404,7 +469,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: "transparent",
-    zIndex: 999, // Higher than anything in TransactionsScreen
+    zIndex: 999, // Make sure this is lower than dropdown's z-index
   },
 })
 

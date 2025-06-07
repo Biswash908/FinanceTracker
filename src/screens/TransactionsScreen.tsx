@@ -946,6 +946,9 @@ const TransactionsScreen = () => {
           balance={financialSummary.balance}
           categoryTotals={financialSummary.categoryTotals}
           pendingAmount={financialSummary.pendingAmount}
+          inflowCategories={financialSummary.inflowCategories}
+          expenseCategories={financialSummary.expenseCategories}
+          selectedType={selectedType}
         />
 
         {/* Error */}
@@ -978,34 +981,42 @@ const TransactionsScreen = () => {
                 </TouchableOpacity>
 
                 {transactionSortDropdownVisible && (
-                  <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
-                    {transactionSortOptions.map((option) => (
-                      <TouchableOpacity
-                        key={option.key}
-                        style={[
-                          styles.dropdownItem,
-                          sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownItem,
-                          isDarkMode && { borderBottomColor: "#444" },
-                          sortBy === option.sortBy &&
-                            sortOrder === option.direction &&
-                            isDarkMode && { backgroundColor: "#3a3a3a" },
-                        ]}
-                        onPress={() => handleTransactionSortOptionChange(option)}
-                      >
-                        <Text
+                  <View style={styles.sortDropdownWrapper} pointerEvents="box-none">
+                    <TouchableOpacity
+                      style={styles.overlay}
+                      activeOpacity={1}
+                      onPress={() => setTransactionSortDropdownVisible(false)}
+                      pointerEvents="box-only"
+                    />
+                    <View style={[styles.dropdown, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}>
+                      {transactionSortOptions.map((option) => (
+                        <TouchableOpacity
+                          key={option.key}
                           style={[
-                            styles.dropdownText,
-                            sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownText,
-                            isDarkMode && { color: "#DDD" },
+                            styles.dropdownItem,
+                            sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownItem,
+                            isDarkMode && { borderBottomColor: "#444" },
+                            sortBy === option.sortBy &&
+                              sortOrder === option.direction &&
+                              isDarkMode && { backgroundColor: "#3a3a3a" },
                           ]}
+                          onPress={() => handleTransactionSortOptionChange(option)}
                         >
-                          {option.label}
-                        </Text>
-                        {sortBy === option.sortBy && sortOrder === option.direction && (
-                          <MaterialIcons name="check" size={16} color={isDarkMode ? "#3498db" : "#3498db"} />
-                        )}
-                      </TouchableOpacity>
-                    ))}
+                          <Text
+                            style={[
+                              styles.dropdownText,
+                              sortBy === option.sortBy && sortOrder === option.direction && styles.selectedDropdownText,
+                              isDarkMode && { color: "#DDD" },
+                            ]}
+                          >
+                            {option.label}
+                          </Text>
+                          {sortBy === option.sortBy && sortOrder === option.direction && (
+                            <MaterialIcons name="check" size={16} color="#3498db" />
+                          )}
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   </View>
                 )}
               </View>
@@ -1043,7 +1054,7 @@ const TransactionsScreen = () => {
                 onPress={handleExportToCSV}
                 disabled={isExporting || sortedTransactions.length === 0}
               >
-                <MaterialIcons name="file-download" size={16} color="#FFF" />
+                <MaterialIcons name="file-download" size={16} color="#3498db" />
                 <Text style={styles.exportButtonText}>Export</Text>
               </TouchableOpacity>
 
@@ -1117,24 +1128,20 @@ const TransactionsScreen = () => {
                 />
               )}
 
-              {/* Scroll buttons */}
-              {contentHeight > containerHeight && (
-                <>
-                  {scrollPosition > SCROLL_THRESHOLD && (
-                    <TouchableOpacity style={styles.scrollToTopButton} onPress={scrollToTop}>
-                      <MaterialIcons name="arrow-upward" size={24} color="#FFF" />
-                    </TouchableOpacity>
-                  )}
-                  {/* Hide scroll down button when at the bottom */}
-                  {scrollPosition + containerHeight < contentHeight - 20 && (
-                    <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
-                      <MaterialIcons name="arrow-downward" size={24} color="#FFF" />
-                    </TouchableOpacity>
-                  )}
-                </>
-              )}
-            </View>
-          )}
+                {/* Scroll buttons */}
+                {scrollPosition > SCROLL_THRESHOLD && (
+                  <TouchableOpacity style={styles.scrollToTopButton} onPress={scrollToTop}>
+                    <MaterialIcons name="arrow-upward" size={24} color="#FFF" />
+                  </TouchableOpacity>
+                )}
+                {scrollPosition < 1000 && ( // Simple condition instead of contentHeight comparison
+                  <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
+                    <MaterialIcons name="arrow-downward" size={24} color="#FFF" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )
+          }
         </View>
 
         {/* Bottom padding */}
@@ -1221,7 +1228,7 @@ const styles = StyleSheet.create({
   },
   searchInputContainer: {
     flex: 1,
-    overflow: "hidden",
+    overflow: "visible",
   },
   searchInput: {
     backgroundColor: "#fff",
@@ -1291,7 +1298,7 @@ const styles = StyleSheet.create({
   },
   sortContainer: {
     position: "relative",
-    zIndex: 20,
+    zIndex: 5000,
   },
   sortButton: {
     width: 44,
@@ -1308,22 +1315,22 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  dropdown: {
-    position: "absolute",
-    top: 50,
-    right: 0,
-    backgroundColor: "white",
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: "#eee",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 10, // Lower than FinancialSummary dropdown
-    minWidth: 200,
-    zIndex: 21, // Lower than FinancialSummary dropdown
-  },
+    dropdown: {
+      position: "absolute",
+      top: 50,
+      right: 0,
+      backgroundColor: "white",
+      borderRadius: 8,
+      borderWidth: 1,
+      borderColor: "#eee",
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.15,
+      shadowRadius: 4,
+      elevation: 25, // Lower than FinancialSummary
+      minWidth: 200,
+      zIndex: 5001, // Lower than FinancialSummary
+    },
   dropdownItem: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1349,22 +1356,21 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: 12,
     right: 12,
-    backgroundColor: "#3498db",
+    backgroundColor: "transparent",      
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 20,
+    borderRadius: 6,                      
+    borderWidth: 1,                    
+    borderColor: "#3498db",
     flexDirection: "row",
     alignItems: "center",
     zIndex: 100,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 5,
     minWidth: 80,
+    shadowColor: "transparent",            
+    elevation: 0
   },
   exportButtonText: {
-    color: "#FFF",
+    color: "#3498db",                    
     fontSize: 12,
     fontWeight: "600",
     marginLeft: 4,
@@ -1373,7 +1379,7 @@ const styles = StyleSheet.create({
     height: screenHeight * 0.75,
     backgroundColor: "#fff",
     borderRadius: 12,
-    overflow: "hidden",
+    overflow: "visible",
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -1560,13 +1566,26 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
   },
-  overlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    zIndex: 99, // Lower than dropdowns
+  sortDropdownWrapper: {
+  position: "absolute",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  zIndex: 9999,
+  justifyContent: "flex-start",
+  alignItems: "flex-end",
+  paddingTop: 120, // adjust based on header height
+  paddingRight: 16,
+},
+overlay: {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  backgroundColor: "transparent",
+  zIndex: 8999, // Make sure this is lower than dropdown's z-index
   },
 })
 

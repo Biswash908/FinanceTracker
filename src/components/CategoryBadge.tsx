@@ -28,6 +28,7 @@ const CategoryBadge: React.FC<CategoryBadgeProps> = ({ category, isSelected, onP
       housing: "🏠",
       income: "💰",
       pending: "⏳",
+      deposit: "📥",
       other: "📋",
     }
 

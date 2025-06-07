@@ -143,7 +143,8 @@ const DashboardScreen = () => {
   }, [entityId, accountId, timeRange, lastRefresh])
 
   // Calculate financial summary
-  const { income, expenses, balance, categoryTotals } = calculateFinancials(transactions || [])
+  const financialSummary = calculateFinancials(transactions || [])
+  const { income, expenses, balance } = financialSummary
 
   // Handle refresh
   const handleRefresh = async () => {
@@ -175,8 +176,8 @@ const DashboardScreen = () => {
     }
   }
 
-  // Format category data for chart
-  const categoryData = Object.entries(categoryTotals)
+  // Update the category data calculation to use expenseCategories
+  const categoryData = Object.entries(financialSummary.expenseCategories || financialSummary.categoryTotals)
     .filter(([_, amount]) => amount > 0)
     .map(([category, amount]) => ({
       name: category.charAt(0).toUpperCase() + category.slice(1),
@@ -354,9 +355,11 @@ const DashboardScreen = () => {
   )
 }
 
-// Helper function to get category colors
+// Update getCategoryColor to include deposit
 const getCategoryColor = (category) => {
   const colors = {
+    income: "#4CAF50",
+    deposit: "#2196F3",
     food: "#FF9800",
     shopping: "#9C27B0",
     entertainment: "#2196F3",
@@ -382,7 +385,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 26,
     marginBottom: 16,
   },
   title: {

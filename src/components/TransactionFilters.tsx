@@ -31,6 +31,7 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
     "All",
     ...[
       "Charity",
+      "Deposit", // Added deposit category
       "Education",
       "Entertainment",
       "Food",

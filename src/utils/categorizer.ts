@@ -1,6 +1,4 @@
-/**
- * Categorize a transaction based on its description and pending status
- */
+// Update the calculateFinancials function to handle pending transactions correctly
 export const categorizeTransaction = (description: string, isPending?: boolean): string => {
   // If no description is provided, consider it uncategorized
   if (!description || description.trim() === "") {
@@ -8,6 +6,20 @@ export const categorizeTransaction = (description: string, isPending?: boolean):
   }
 
   description = description.toLowerCase()
+
+  // Check for deposit patterns first
+  if (
+    /deposit|credit|transfer in|money received|incoming|refund|cashback|reimbursement|returned|money back/i.test(
+      description,
+    )
+  ) {
+    return "deposit"
+  }
+
+  // Check for salary/income patterns
+  if (/salary|wage|payroll|income|bonus|commission|freelance|consulting|contract payment/i.test(description)) {
+    return "income"
+  }
 
   // Check if this is a refund or reversal
   const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(description)
@@ -132,7 +144,6 @@ export const categorizeTransaction = (description: string, isPending?: boolean):
   return "other"
 }
 
-// Update the calculateFinancials function to handle pending transactions correctly
 export const calculateFinancials = (transactions) => {
   console.log(`Calculating financials for ${transactions?.length || 0} transactions`)
 
@@ -140,6 +151,8 @@ export const calculateFinancials = (transactions) => {
   let expenses = 0
   let pendingAmount = 0
   const categoryTotals = {}
+  const inflowCategories = {}
+  const expenseCategories = {}
 
   // Check if transactions is an array before using forEach
   if (Array.isArray(transactions) && transactions.length > 0) {
@@ -150,58 +163,48 @@ export const calculateFinancials = (transactions) => {
       const isPending = transaction.pending === true
       const description = transaction.description || ""
 
-      // Check if this is a refund or reversal
-      const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(
-        description.toLowerCase(),
-      )
+      // Only process transactions with non-zero amounts
+      if (amount === 0) return
+
+      // Determine if this is an inflow or outflow based on amount sign
+      const isInflow = amount > 0
+
+      // Get the appropriate category
+      const category = categorizeTransaction(description, isPending)
 
       if (isPending) {
         // Track pending transactions separately
-        if (amount < 0) {
-          // Only negative amounts (outflows) go to pending
-          pendingAmount += Math.abs(amount)
-        } else if (amount > 0) {
-          // Positive pending amounts (inflows) go to income
-          income += amount
-        }
+        pendingAmount += Math.abs(amount)
 
-        // Categorize pending transactions for the category totals
-        let category
-        if (amount > 0) {
-          // For positive amounts (inflows), check if it's a refund/reversal
-          if (isRefundOrReversal) {
-            category = categorizeTransaction(description, false)
-          } else {
-            category = "income"
-          }
+        // Add to the appropriate category based on transaction type
+        if (isInflow) {
+          inflowCategories[category] = (inflowCategories[category] || 0) + amount
         } else {
-          // For negative amounts (outflows)
-          category = categorizeTransaction(description, false)
+          expenseCategories[category] = (expenseCategories[category] || 0) + Math.abs(amount)
         }
 
-        // Add to the category for total calculations
+        // For backward compatibility
         categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
       } else {
         // Non-pending transactions
-        if (amount > 0) {
+        if (isInflow) {
           // Add to income
           income += amount
 
-          // For positive amounts (inflows), check if it's a refund/reversal
-          if (isRefundOrReversal) {
-            const category = categorizeTransaction(description, false)
-            categoryTotals[category] = (categoryTotals[category] || 0) + amount
-          } else {
-            // Add to income category if not a refund/reversal
-            categoryTotals["income"] = (categoryTotals["income"] || 0) + amount
-          }
-        } else if (amount < 0) {
-          // Add to expenses (only non-pending expenses)
-          expenses += Math.abs(amount)
+          // Add to inflow categories ONLY
+          inflowCategories[category] = (inflowCategories[category] || 0) + amount
 
-          // Categorize and add to category totals
-          const category = categorizeTransaction(description, false)
-          categoryTotals[category] = (categoryTotals[category] || 0) + Math.abs(amount)
+          // Don't add inflows to categoryTotals (it's meant for expenses only)
+        } else {
+          // Add to expenses
+          const absAmount = Math.abs(amount)
+          expenses += absAmount
+
+          // Add to expense categories ONLY
+          expenseCategories[category] = (expenseCategories[category] || 0) + absAmount
+
+          // For backward compatibility
+          categoryTotals[category] = (categoryTotals[category] || 0) + absAmount
         }
       }
     })
@@ -215,6 +218,8 @@ export const calculateFinancials = (transactions) => {
   console.log(
     `Calculated: Income=${income.toFixed(2)}, Expenses=${expenses.toFixed(2)}, Pending=${pendingAmount.toFixed(2)}, Balance=${balance.toFixed(2)}`,
   )
+  console.log(`Inflow categories:`, Object.keys(inflowCategories))
+  console.log(`Expense categories:`, Object.keys(expenseCategories))
 
   return {
     income,
@@ -222,5 +227,7 @@ export const calculateFinancials = (transactions) => {
     balance,
     pendingAmount,
     categoryTotals,
+    inflowCategories,
+    expenseCategories,
   }
 }
