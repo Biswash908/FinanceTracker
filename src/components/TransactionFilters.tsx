@@ -25,13 +25,14 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   const { isDarkMode } = useTheme()
   const [isProcessingCategoryChange, setIsProcessingCategoryChange] = useState(false)
   const [isProcessingTypeChange, setIsProcessingTypeChange] = useState(false)
+  const [categoryFiltersExpanded, setCategoryFiltersExpanded] = useState(true) // Collapsible state
 
-  // Sort categories alphabetically (except "All" which stays first)
+  // Updated categories to match Lean's categorization mapping
   const categoryFilters = [
     "All",
     ...[
       "Charity",
-      "Deposit", // Added deposit category
+      "Deposit",
       "Education",
       "Entertainment",
       "Food",
@@ -179,22 +180,37 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
         </ScrollView>
       </View>
 
-      {/* Category Filter - Now vertical */}
+      {/* Category Filter - Now collapsible */}
       <View style={styles.section}>
-        <Text style={[styles.sectionTitle, isDarkMode && { color: "#DDD" }]}>Category</Text>
-        <Text style={[styles.categoryHint, isDarkMode && { color: "#AAA" }]}>
-          Tap multiple categories to filter by more than one
-        </Text>
-        <View style={styles.categoryFiltersGrid}>
-          {categoryFilters.map((category) => (
-            <CategoryBadge
-              key={category}
-              category={category}
-              isSelected={isCategorySelected(category)}
-              onPress={() => handleCategoryPress(category)}
-            />
-          ))}
-        </View>
+        <TouchableOpacity
+          style={styles.categoryHeader}
+          onPress={() => setCategoryFiltersExpanded(!categoryFiltersExpanded)}
+        >
+          <Text style={[styles.sectionTitle, isDarkMode && { color: "#DDD" }]}>Category</Text>
+          <MaterialIcons
+            name={categoryFiltersExpanded ? "expand-less" : "expand-more"}
+            size={24}
+            color={isDarkMode ? "#DDD" : "#333"}
+          />
+        </TouchableOpacity>
+
+        {categoryFiltersExpanded && (
+          <>
+            <Text style={[styles.categoryHint, isDarkMode && { color: "#AAA" }]}>
+              Tap multiple categories to filter by more than one
+            </Text>
+            <View style={styles.categoryFiltersGrid}>
+              {categoryFilters.map((category) => (
+                <CategoryBadge
+                  key={category}
+                  category={category}
+                  isSelected={isCategorySelected(category)}
+                  onPress={() => handleCategoryPress(category)}
+                />
+              ))}
+            </View>
+          </>
+        )}
       </View>
 
       {/* Reset Filters Button */}
@@ -232,6 +248,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "600",
     color: "#333",
+    marginBottom: 12,
+  },
+  categoryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     marginBottom: 12,
   },
   categoryHint: {

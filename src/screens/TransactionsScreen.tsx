@@ -30,11 +30,13 @@ import FinancialSummary from "../components/FinancialSummary"
 import AccountSelector from "../components/AccountSelector"
 import TransactionFilters from "../components/TransactionFilters"
 import CustomScrollbar from "../components/CustomScrollbar"
+import TransactionDetailModal from "../components/TransactionDetailModal"
 
 // Services and Utils
 import { fetchTransactions, fetchAccounts, clearAllCache, clearTransactionsCache } from "../services/lean-api"
 import { categorizeTransaction, calculateFinancials } from "../utils/categorizer"
 import { StorageService } from "../services/storage-service"
+import { AccountPersistenceService } from "../services/account-persistence"
 import { useTheme } from "../context/ThemeContext"
 import { leanEntityService } from "../services/lean-entity-service"
 
@@ -110,6 +112,9 @@ const TransactionsScreen = () => {
   const [entityId, setEntityId] = useState<string | null>(null)
   // Add state for transaction history sort dropdown
   const [transactionSortDropdownVisible, setTransactionSortDropdownVisible] = useState(false)
+  // Transaction detail modal state
+  const [selectedTransaction, setSelectedTransaction] = useState(null)
+  const [transactionDetailVisible, setTransactionDetailVisible] = useState(false)
 
   // Refs
   const mainScrollViewRef = useRef(null)
@@ -188,7 +193,7 @@ const TransactionsScreen = () => {
     }
   }
 
-  // Filter transactions based on search query, category, type, and account
+  // FIXED: Filter transactions based on search query, category, type, and account
   const filteredTransactions = useMemo(() => {
     return Array.isArray(transactions)
       ? transactions.filter((transaction) => {
@@ -211,44 +216,56 @@ const TransactionsScreen = () => {
           const matchesQuery =
             searchQuery === "" ||
             transaction.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (transaction.lean_description &&
+              transaction.lean_description.toLowerCase().includes(searchQuery.toLowerCase())) ||
             (transaction.amount && transaction.amount.toString().includes(searchQuery)) ||
             (transaction.account_name && transaction.account_name.toLowerCase().includes(searchQuery.toLowerCase()))
 
           // Check for pending status
           const isPending = transaction.pending === true
 
-          // Check if this is a refund or reversal
-          const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(
-            transaction.description.toLowerCase(),
-          )
-
-          // Filter by category
+          // Get transaction amount and determine if it's income
           const amount = transaction.amount ? Number.parseFloat(transaction.amount) : 0
           const isIncome = amount > 0
 
-          // Determine category based on transaction type
-          let category
-          if (isIncome && isRefundOrReversal) {
-            // For refunds/reversals, use the categorizeTransaction function
-            category = categorizeTransaction(transaction.description, false)
-          } else if (isIncome) {
-            // For regular income
-            category = "income"
+          // Get the category for this transaction
+          const transactionCategory = categorizeTransaction(transaction, isPending)
+
+          // FIXED: Category filtering logic
+          let matchesCategory = false
+          if (selectedCategory.includes("All")) {
+            matchesCategory = true
           } else {
-            // For expenses
-            category = categorizeTransaction(transaction.description, false)
+            // Check if the transaction's category matches any selected category
+            matchesCategory = selectedCategory.some((selectedCat) => {
+              // Handle special case for income category
+              if (selectedCat.toLowerCase() === "income") {
+                return isIncome && transactionCategory.toLowerCase() === "income"
+              }
+              // For other categories, match the transaction category
+              return transactionCategory.toLowerCase() === selectedCat.toLowerCase()
+            })
           }
 
-          // Check if "All" is selected or if the transaction category is in the selected categories
-          const matchesCategory =
-            selectedCategory.includes("All") || selectedCategory.some((c) => c.toLowerCase() === category.toLowerCase())
-
-          // Filter by transaction type - now handling multiple selected types
-          const matchesType =
-            selectedType.includes("All") ||
-            (isPending && selectedType.includes("Pending")) ||
-            (!isPending && isIncome && selectedType.includes("Inflow")) ||
-            (!isPending && !isIncome && selectedType.includes("Expense"))
+          // FIXED: Transaction type filtering - now properly handles both inflow and expense for categories
+          let matchesType = false
+          if (selectedType.includes("All")) {
+            matchesType = true
+          } else {
+            // Check each selected type
+            for (const type of selectedType) {
+              if (type === "Pending" && isPending) {
+                matchesType = true
+                break
+              } else if (type === "Inflow" && !isPending && isIncome) {
+                matchesType = true
+                break
+              } else if (type === "Expense" && !isPending && !isIncome) {
+                matchesType = true
+                break
+              }
+            }
+          }
 
           return matchesQuery && matchesCategory && matchesType
         })
@@ -374,7 +391,7 @@ const TransactionsScreen = () => {
     [startDate, endDate],
   )
 
-  // Load accounts function - now uses dynamic entity ID
+  // Load accounts function - now uses dynamic entity ID and loads saved selection
   const loadAccounts = async (currentEntityId?: string) => {
     try {
       setAccountsLoading(true)
@@ -392,11 +409,38 @@ const TransactionsScreen = () => {
       console.log(`Loaded ${accountsData.length} accounts`)
       setAccounts(accountsData)
 
-      // Select first account by default instead of all accounts
-      if (accountsData.length > 0) {
-        const firstAccountId = accountsData[0].id
-        console.log("Selecting first account ID:", firstAccountId)
-        setSelectedAccounts([firstAccountId])
+      // Load saved account selection
+      const savedAccountIds = await AccountPersistenceService.loadSelectedAccounts()
+
+      if (savedAccountIds.length > 0) {
+        // Validate that saved accounts still exist
+        const validAccountIds = AccountPersistenceService.validateAccountIds(savedAccountIds, accountsData)
+
+        if (validAccountIds.length > 0) {
+          console.log("Restoring saved account selection:", validAccountIds)
+          setSelectedAccounts(validAccountIds)
+
+          // If some accounts were removed, save the updated list
+          if (validAccountIds.length !== savedAccountIds.length) {
+            await AccountPersistenceService.saveSelectedAccounts(validAccountIds)
+          }
+        } else {
+          // No valid saved accounts, select first account by default
+          if (accountsData.length > 0) {
+            const firstAccountId = accountsData[0].id
+            console.log("No valid saved accounts, selecting first account ID:", firstAccountId)
+            setSelectedAccounts([firstAccountId])
+            await AccountPersistenceService.saveSelectedAccounts([firstAccountId])
+          }
+        }
+      } else {
+        // No saved selection, select first account by default
+        if (accountsData.length > 0) {
+          const firstAccountId = accountsData[0].id
+          console.log("No saved selection, selecting first account ID:", firstAccountId)
+          setSelectedAccounts([firstAccountId])
+          await AccountPersistenceService.saveSelectedAccounts([firstAccountId])
+        }
       }
     } catch (err) {
       console.error("Error loading accounts:", err)
@@ -628,10 +672,14 @@ const TransactionsScreen = () => {
     }
   }, [loadingMore, hasMore, loadAttemptFailed, selectedAccounts, accountLoadingState])
 
-  // Handle account selection change
-  const handleAccountsChange = useCallback((accountIds) => {
+  // Handle account selection change - SAVES TO STORAGE
+  const handleAccountsChange = useCallback(async (accountIds) => {
     console.log("Selected account IDs:", accountIds)
     setSelectedAccounts(accountIds)
+
+    // Save selected accounts to persistent storage
+    await AccountPersistenceService.saveSelectedAccounts(accountIds)
+
     // The useEffect will trigger a reload
   }, [])
 
@@ -674,12 +722,12 @@ const TransactionsScreen = () => {
       console.log("Starting CSV export process...")
 
       // Create CSV content
-      const headers = ["Date", "Description", "Amount", "Category", "Account", "Status"]
+      const headers = ["Date", "Description", "Amount", "Category", "Account", "Status", "Lean Category", "Confidence"]
       const csvContent = [
         headers.join(","),
         ...sortedTransactions.map((transaction) => {
           const isIncome = transaction.amount > 0
-          const category = isIncome ? "income" : categorizeTransaction(transaction.description)
+          const category = isIncome ? "income" : categorizeTransaction(transaction)
           const status = transaction.pending ? "Pending" : "Completed"
           const date = new Date(transaction.timestamp || transaction.date).toLocaleDateString()
 
@@ -690,6 +738,8 @@ const TransactionsScreen = () => {
             category,
             `"${transaction.account_name}"`,
             status,
+            transaction.lean_category || "N/A",
+            transaction.lean_category_confidence || "N/A",
           ].join(",")
         }),
       ].join("\n")
@@ -794,6 +844,18 @@ const TransactionsScreen = () => {
     inputRange: [0, 1],
     outputRange: ["0%", "100%"],
   })
+
+  // Handle transaction press
+  const handleTransactionPress = (transaction: any) => {
+    setSelectedTransaction(transaction)
+    setTransactionDetailVisible(true)
+  }
+
+  // Handle transaction detail modal close
+  const handleTransactionDetailClose = () => {
+    setTransactionDetailVisible(false)
+    setSelectedTransaction(null)
+  }
 
   // Show connection prompt if no entity ID
   if (!entityId && !accountsLoading) {
@@ -915,7 +977,7 @@ const TransactionsScreen = () => {
           </View>
         </View>
 
-        {/* Filters (without sorting) */}
+        {/* Filters (without export button) */}
         <TransactionFilters
           selectedCategory={selectedCategory}
           setSelectedCategory={(categories) => {
@@ -971,7 +1033,27 @@ const TransactionsScreen = () => {
               </Text>
             </View>
             <View style={styles.transactionHeaderRight}>
-              {/* Sort Button - replaces export button position */}
+              {/* Export Button - MOVED BACK HERE */}
+              <TouchableOpacity
+                style={[
+                  styles.exportButton,
+                  isDarkMode && { backgroundColor: "#2A2A2A" },
+                  isExporting && styles.disabledButton,
+                ]}
+                onPress={handleExportToCSV}
+                disabled={isExporting || sortedTransactions.length === 0}
+              >
+                <MaterialIcons
+                  name={isExporting ? "hourglass-empty" : "file-download"}
+                  size={16}
+                  color={isDarkMode ? "#3498db" : "#3498db"}
+                />
+                <Text style={[styles.exportButtonText, isDarkMode && { color: "#3498db" }]}>
+                  {isExporting ? "Exporting..." : "Export"}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Sort Button */}
               <View style={styles.sortContainer}>
                 <TouchableOpacity
                   style={[styles.sortButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
@@ -1048,16 +1130,6 @@ const TransactionsScreen = () => {
             </View>
           ) : (
             <View style={styles.flatListContainer} onLayout={handleLayout}>
-              {/* Export button inside transaction list - top right - Updated styling */}
-              <TouchableOpacity
-                style={[styles.exportButtonInList, isExporting && styles.disabledButton]}
-                onPress={handleExportToCSV}
-                disabled={isExporting || sortedTransactions.length === 0}
-              >
-                <MaterialIcons name="file-download" size={16} color="#3498db" />
-                <Text style={styles.exportButtonText}>Export</Text>
-              </TouchableOpacity>
-
               <Animated.FlatList
                 ref={transactionListRef}
                 data={sortedTransactions}
@@ -1065,9 +1137,9 @@ const TransactionsScreen = () => {
                 renderItem={({ item }) => (
                   <TransactionCard
                     transaction={item}
-                    category={categorizeTransaction(item.description, item.pending)}
+                    category={categorizeTransaction(item, item.pending)}
                     isPending={item.pending === true}
-                    onPress={() => console.log("Transaction pressed:", item.id)}
+                    onPress={() => handleTransactionPress(item)}
                   />
                 )}
                 contentContainerStyle={styles.transactionListContent}
@@ -1128,20 +1200,19 @@ const TransactionsScreen = () => {
                 />
               )}
 
-                {/* Scroll buttons */}
-                {scrollPosition > SCROLL_THRESHOLD && (
-                  <TouchableOpacity style={styles.scrollToTopButton} onPress={scrollToTop}>
-                    <MaterialIcons name="arrow-upward" size={24} color="#FFF" />
-                  </TouchableOpacity>
-                )}
-                {scrollPosition < 1000 && ( // Simple condition instead of contentHeight comparison
-                  <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
-                    <MaterialIcons name="arrow-downward" size={24} color="#FFF" />
-                  </TouchableOpacity>
-                )}
-              </View>
-            )
-          }
+              {/* Scroll buttons */}
+              {scrollPosition > SCROLL_THRESHOLD && (
+                <TouchableOpacity style={styles.scrollToTopButton} onPress={scrollToTop}>
+                  <MaterialIcons name="arrow-upward" size={24} color="#FFF" />
+                </TouchableOpacity>
+              )}
+              {scrollPosition < 1000 && ( // Simple condition instead of contentHeight comparison
+                <TouchableOpacity style={styles.scrollToBottomButton} onPress={scrollToBottom}>
+                  <MaterialIcons name="arrow-downward" size={24} color="#FFF" />
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
         </View>
 
         {/* Bottom padding */}
@@ -1156,6 +1227,13 @@ const TransactionsScreen = () => {
           onPress={() => setTransactionSortDropdownVisible(false)}
         />
       )}
+
+      {/* Transaction Detail Modal */}
+      <TransactionDetailModal
+        visible={transactionDetailVisible}
+        transaction={selectedTransaction}
+        onClose={handleTransactionDetailClose}
+      />
     </SafeAreaView>
   )
 }
@@ -1285,6 +1363,7 @@ const styles = StyleSheet.create({
   transactionHeaderRight: {
     flexDirection: "row",
     alignItems: "center",
+    gap: 8,
   },
   transactionBoxTitle: {
     fontSize: 18,
@@ -1295,6 +1374,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#666",
     marginTop: 4,
+  },
+  exportButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#eee",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  exportButtonText: {
+    fontSize: 12,
+    color: "#3498db",
+    marginLeft: 4,
+    fontWeight: "600",
   },
   sortContainer: {
     position: "relative",
@@ -1315,22 +1415,22 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-    dropdown: {
-      position: "absolute",
-      top: 50,
-      right: 0,
-      backgroundColor: "white",
-      borderRadius: 8,
-      borderWidth: 1,
-      borderColor: "#eee",
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.15,
-      shadowRadius: 4,
-      elevation: 25, // Lower than FinancialSummary
-      minWidth: 200,
-      zIndex: 5001, // Lower than FinancialSummary
-    },
+  dropdown: {
+    position: "absolute",
+    top: 50,
+    right: 0,
+    backgroundColor: "white",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#eee",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 25, // Lower than FinancialSummary
+    minWidth: 200,
+    zIndex: 5001, // Lower than FinancialSummary
+  },
   dropdownItem: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1352,29 +1452,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#3498db",
   },
-  exportButtonInList: {
-    position: "absolute",
-    top: 12,
-    right: 12,
-    backgroundColor: "transparent",      
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 6,                      
-    borderWidth: 1,                    
-    borderColor: "#3498db",
-    flexDirection: "row",
-    alignItems: "center",
-    zIndex: 100,
-    minWidth: 80,
-    shadowColor: "transparent",            
-    elevation: 0
-  },
-  exportButtonText: {
-    color: "#3498db",                    
-    fontSize: 12,
-    fontWeight: "600",
-    marginLeft: 4,
-  },
   transactionBox: {
     height: screenHeight * 0.75,
     backgroundColor: "#fff",
@@ -1394,7 +1471,6 @@ const styles = StyleSheet.create({
   },
   transactionListContent: {
     padding: 8,
-    paddingTop: 60, // Add padding to account for export button
   },
   loadingContainer: {
     flex: 1,
@@ -1567,25 +1643,25 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   sortDropdownWrapper: {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  zIndex: 9999,
-  justifyContent: "flex-start",
-  alignItems: "flex-end",
-  paddingTop: 120, // adjust based on header height
-  paddingRight: 16,
-},
-overlay: {
-  position: "fixed",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  backgroundColor: "transparent",
-  zIndex: 8999, // Make sure this is lower than dropdown's z-index
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999,
+    justifyContent: "flex-start",
+    alignItems: "flex-end",
+    paddingTop: 120, // adjust based on header height
+    paddingRight: 16,
+  },
+  overlay: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "transparent",
+    zIndex: 8999, // Make sure this is lower than dropdown's z-index
   },
 })
 

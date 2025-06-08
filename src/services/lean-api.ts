@@ -211,6 +211,7 @@ export const fetchTransactions = async (
       to_date: endDate,
       limit: pageSize,
       offset: offset,
+      insights: true, // Enable Lean's categorization
     }
 
     console.log("Request body:", JSON.stringify(requestBody))
@@ -248,6 +249,10 @@ export const fetchTransactions = async (
         id:
           transaction.id ||
           `${entityId}-${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+        // Add Lean's categorization data
+        lean_category: transaction.category || null,
+        lean_category_confidence: transaction.category_confidence || null,
+        lean_description: transaction.cleansed_description || transaction.description,
       }))
 
       // Filter transactions by date client-side
@@ -409,6 +414,7 @@ export const fetchTransactionsMultiAccount = async (
           to_date: endDate,
           limit: pageSize,
           offset: offset,
+          insights: true, // Enable Lean's categorization
         }
 
         console.log(`Fetching for entity ${entityId}, account ${accountId}`)
@@ -448,6 +454,10 @@ export const fetchTransactionsMultiAccount = async (
               id:
                 transaction.id ||
                 `${entityId}-${accountId}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+              // Add Lean's categorization data
+              lean_category: transaction.category || null,
+              lean_category_confidence: transaction.category_confidence || null,
+              lean_description: transaction.cleansed_description || transaction.description,
             }))
 
             allTransactions.push(...accountTransactions)
@@ -555,13 +565,13 @@ export const removeBankConnection = async (entityId: string): Promise<{ success:
 
     // Use the disconnect service to properly disconnect from Lean's servers
     const result = await leanDisconnectService.disconnectEntity(entityId)
-    
+
     return result
   } catch (error) {
     console.error("Error removing bank connection:", error)
     return {
       success: false,
-      message: `Failed to disconnect bank: ${error.message}`
+      message: `Failed to disconnect bank: ${error.message}`,
     }
   }
 }
@@ -574,25 +584,25 @@ export const disconnectAllBanks = async (): Promise<{ success: boolean; message:
     console.log("Disconnecting all banks")
 
     // Get customer ID from storage
-    const AsyncStorage = require('@react-native-async-storage/async-storage').default
-    const customerId = await AsyncStorage.getItem('lean_customer_id') || await AsyncStorage.getItem('customerId')
-    
+    const AsyncStorage = require("@react-native-async-storage/async-storage").default
+    const customerId = (await AsyncStorage.getItem("lean_customer_id")) || (await AsyncStorage.getItem("customerId"))
+
     if (!customerId) {
       return {
         success: false,
-        message: "No customer ID found"
+        message: "No customer ID found",
       }
     }
 
     // Use the disconnect service to disconnect all entities
     const result = await leanDisconnectService.disconnectAllEntities(customerId)
-    
+
     return result
   } catch (error) {
     console.error("Error disconnecting all banks:", error)
     return {
       success: false,
-      message: `Failed to disconnect all banks: ${error.message}`
+      message: `Failed to disconnect all banks: ${error.message}`,
     }
   }
 }

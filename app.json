@@ -24,6 +24,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow $(PRODUCT_NAME) to access your photos to save exported files.",
+          "savePhotosPermission": "Allow $(PRODUCT_NAME) to save exported files to your photos."
+        }
+      ]
+    ]
   }
 }

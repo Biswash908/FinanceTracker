@@ -5,10 +5,11 @@ import { memo } from "react"
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { formatDate } from "../utils/formatters"
 import { useTheme } from "../context/ThemeContext"
+import { categorizeTransaction } from "../utils/categorizer"
 
 interface TransactionCardProps {
   transaction: any
-  category: string
+  category?: string
   isPending?: boolean
   onPress: () => void
 }
@@ -23,10 +24,13 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
 
   const amount = transaction.amount ? Number.parseFloat(transaction.amount) : 0
   const isIncome = amount > 0
-  const description = transaction.description || "Unknown transaction"
+  const description = transaction.lean_description || transaction.description || "Unknown transaction"
   const date = transaction.timestamp || transaction.date || new Date().toISOString()
   const accountName = transaction.account_name || "Unknown Account"
   const currency = transaction.currency_code || "AED"
+
+  // Use Lean categorization if available, otherwise use the passed category or categorize manually
+  const finalCategory = category || categorizeTransaction(transaction, isPending)
 
   // Format currency with commas
   const formatCurrency = (amount, currency = "AED") => {
@@ -51,6 +55,7 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
       charity: "❤️",
       housing: "🏠",
       income: "💰",
+      deposit: "📥",
       other: "📋",
     }
 
@@ -75,7 +80,6 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
           style={[styles.amount, isPending ? styles.pendingText : isIncome ? styles.incomeText : styles.expenseText]}
         >
           {isIncome ? "+" : "-"} {formatCurrency(amount, currency)}
-          {/* Removed the (Pending) text here as requested */}
         </Text>
       </View>
 
@@ -84,11 +88,17 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
       <View style={styles.footer}>
         <View style={styles.leftFooter}>
           <Text style={[styles.category, isDarkMode && { backgroundColor: "#444", color: "#CCC" }]}>
-            {getCategoryEmoji(category)} {category}
+            {getCategoryEmoji(finalCategory)} {finalCategory}
           </Text>
           <Text style={[styles.accountName, isDarkMode && { backgroundColor: "#333", color: "#AAA" }]}>
             {accountName}
           </Text>
+          {/* Show Lean category info if available */}
+          {transaction.lean_category && (
+            <Text style={[styles.leanCategory, isDarkMode && { backgroundColor: "#2C5282", color: "#FFF" }]}>
+              Lean: {transaction.lean_category}
+            </Text>
+          )}
         </View>
         {isPending && (
           <View style={[styles.pendingBadge, isDarkMode && { backgroundColor: "#5d4037" }]}>
@@ -160,6 +170,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
+    flexWrap: "wrap",
   },
   category: {
     fontSize: 12,
@@ -169,6 +180,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 12,
     marginRight: 6,
+    marginBottom: 2,
   },
   accountName: {
     fontSize: 11,
@@ -177,6 +189,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 10,
+    marginRight: 6,
+    marginBottom: 2,
+  },
+  leanCategory: {
+    fontSize: 10,
+    color: "#FFF",
+    backgroundColor: "#3498db",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginBottom: 2,
   },
   pendingBadge: {
     backgroundColor: "#fff3e0",
