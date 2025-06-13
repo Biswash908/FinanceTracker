@@ -3,102 +3,95 @@
 import type React from "react"
 import { TouchableOpacity, Text, StyleSheet } from "react-native"
 import { useTheme } from "../context/ThemeContext"
+import { getCategoryColor, getCategoryEmoji } from "../utils/categorizer"
 
 interface CategoryBadgeProps {
   category: string
   isSelected: boolean
   onPress: () => void
+  displayName?: string
 }
 
-const CategoryBadge: React.FC<CategoryBadgeProps> = ({ category, isSelected, onPress }) => {
+const CategoryBadge: React.FC<CategoryBadgeProps> = ({ category, isSelected, onPress, displayName }) => {
   const { isDarkMode } = useTheme()
 
-  // Get emoji for category
-  const getCategoryEmoji = (category: string): string => {
-    const categoryEmojis = {
-      all: "🔍",
-      food: "🍔",
-      shopping: "🛍️",
-      entertainment: "🎬",
-      utilities: "💡",
-      transport: "🚗",
-      education: "📚",
-      health: "🏥",
-      charity: "❤️",
-      housing: "🏠",
-      income: "💰",
-      pending: "⏳",
-      deposit: "📥",
-      other: "📋",
-    }
-
-    return categoryEmojis[category.toLowerCase()] || "📋"
+  // Special case for "All" category
+  if (category === "All") {
+    return (
+      <TouchableOpacity
+        style={[
+          styles.badge,
+          isSelected ? styles.selectedBadge : styles.unselectedBadge,
+          isDarkMode && { backgroundColor: isSelected ? "#2C5282" : "#333", borderColor: "#555" },
+        ]}
+        onPress={onPress}
+      >
+        <Text
+          style={[
+            styles.badgeText,
+            isSelected ? styles.selectedBadgeText : styles.unselectedBadgeText,
+            isDarkMode && { color: isSelected ? "#FFF" : "#AAA" },
+          ]}
+        >
+          {displayName || "All"}
+        </Text>
+      </TouchableOpacity>
+    )
   }
 
-  // Get category color
-  const getCategoryColor = (category: string): string => {
-    const categoryColors = {
-      food: "#FF5733", // Orange-red
-      transport: "#33A8FF", // Blue
-      utilities: "#33FFC1", // Teal
-      housing: "#8C33FF", // Purple
-      shopping: "#FF33A8", // Pink
-      health: "#33FF57", // Green
-      education: "#FFC133", // Yellow
-      entertainment: "#FF3333", // Red
-      charity: "#33FF33", // Bright green
-      income: "#27ae60", // Green
-      pending: "#f39c12", // Orange
-      other: "#AAAAAA", // Gray
-      all: "#3498db", // Blue
-    }
-
-    return categoryColors[category.toLowerCase()] || "#AAAAAA"
-  }
+  // For other categories, use emoji and color
+  const emoji = getCategoryEmoji(category)
+  const color = getCategoryColor(category)
 
   return (
     <TouchableOpacity
       style={[
-        styles.categoryChip,
-        isSelected && { backgroundColor: getCategoryColor(category) },
-        !isSelected && isDarkMode && { backgroundColor: "#333" },
+        styles.badge,
+        isSelected ? { backgroundColor: color, borderColor: color } : styles.unselectedBadge,
+        isDarkMode && !isSelected && { backgroundColor: "#333", borderColor: "#555" },
       ]}
       onPress={onPress}
-      activeOpacity={0.7}
     >
       <Text
         style={[
-          styles.categoryChipText,
-          isSelected && styles.selectedCategoryChipText,
-          !isSelected && isDarkMode && { color: "#DDD" },
+          styles.badgeText,
+          isSelected ? { color: "#FFF" } : styles.unselectedBadgeText,
+          isDarkMode && !isSelected && { color: "#AAA" },
         ]}
+        numberOfLines={1}
+        ellipsizeMode="tail"
       >
-        {getCategoryEmoji(category)} {category}
+        {emoji} {displayName || category}
       </Text>
     </TouchableOpacity>
   )
 }
 
 const styles = StyleSheet.create({
-  categoryChip: {
-    backgroundColor: "#fff",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    marginRight: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+  badge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    marginBottom: 4,
   },
-  categoryChipText: {
-    fontSize: 14,
-    color: "#333",
+  selectedBadge: {
+    backgroundColor: "#3498db",
+    borderColor: "#3498db",
   },
-  selectedCategoryChipText: {
+  unselectedBadge: {
+    backgroundColor: "#f0f0f0",
+    borderColor: "#e0e0e0",
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  selectedBadgeText: {
     color: "#fff",
-    fontWeight: "bold",
+  },
+  unselectedBadgeText: {
+    color: "#666",
   },
 })
 

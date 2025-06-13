@@ -557,6 +557,119 @@ export const fetchTransactionsMultiAccount = async (
 }
 
 /**
+ * Fetches account balances for all connected accounts
+ */
+export const fetchAccountBalances = async (): Promise<{
+  balances: any[]
+  totalBalance: number
+}> => {
+  try {
+    // Get all entity IDs
+    const entityIds = await getAllEntityIds()
+
+    // Check cache first
+    const cachedData = await StorageService.getCachedBalances(entityIds)
+    if (cachedData && StorageService.isCacheValid(cachedData.timestamp, 1800000)) {
+      // 30 minutes cache
+      console.log("Using cached balance data")
+      return {
+        balances: cachedData.balances,
+        totalBalance: cachedData.totalBalance,
+      }
+    }
+
+    console.log(`Fetching balances for ${entityIds.length} entities:`, entityIds)
+
+    // Get a valid token from the auth service
+    const token = await authService.getToken()
+    const allBalances = []
+    let totalBalance = 0
+
+    // Fetch balances from each entity
+    for (const entityId of entityIds) {
+      try {
+        const requestBody = {
+          entity_id: entityId,
+        }
+
+        logApiCall(`fetchAccountBalances (entity ${entityId})`, requestBody)
+
+        const response = await fetchWithRetry(`${API_BASE_URL}/data/v1/balance`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Scope: "api",
+          },
+          body: JSON.stringify(requestBody),
+        })
+
+        const responseText = await response.text()
+        logApiCall(`fetchAccountBalances Response (entity ${entityId})`, requestBody, responseText)
+
+        let data
+        try {
+          data = JSON.parse(responseText)
+        } catch (e) {
+          console.error(`Failed to parse JSON for entity ${entityId}:`, e)
+          continue
+        }
+
+        if (data.payload && data.payload.accounts) {
+          // Get entity info for bank name and user name
+          const entities = await leanEntityService.getAllEntities()
+          const entityInfo = entities.find((e) => e.entityId === entityId)
+
+          const balances = data.payload.accounts.map((account) => ({
+            ...account,
+            entityId: entityId,
+            bankName: entityInfo?.bankName || "Unknown Bank",
+            userName: entityInfo?.userName || "Unknown User",
+            balance: Number.parseFloat(account.balance || 0),
+          }))
+
+          allBalances.push(...balances)
+
+          // Add to total balance
+          balances.forEach((account) => {
+            totalBalance += account.balance
+          })
+        } else {
+          console.warn(`No balance data found for entity ${entityId}`)
+        }
+      } catch (error) {
+        console.error(`Error fetching balances for entity ${entityId}:`, error)
+        // Continue with other entities
+      }
+    }
+
+    // Cache the combined balances
+    await StorageService.saveBalances(allBalances, totalBalance, entityIds)
+    console.log(`Fetched balances for ${allBalances.length} accounts, total balance: ${totalBalance}`)
+
+    return {
+      balances: allBalances,
+      totalBalance,
+    }
+  } catch (err) {
+    console.error("Fetch balances error:", err)
+
+    // Try to get cached data even if expired
+    const entityIds = await leanEntityService.getAllEntityIds()
+    const cachedData = await StorageService.getCachedBalances(entityIds)
+    if (cachedData) {
+      console.log("Using expired cached balance data due to fetch error")
+      return {
+        balances: cachedData.balances,
+        totalBalance: cachedData.totalBalance,
+      }
+    }
+
+    throw err
+  }
+}
+
+/**
  * Remove a bank connection (entity) - Updated to use disconnect service
  */
 export const removeBankConnection = async (entityId: string): Promise<{ success: boolean; message: string }> => {

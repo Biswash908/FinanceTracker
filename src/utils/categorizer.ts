@@ -1,5 +1,5 @@
 /**
- * Maps Lean's categories to UI-friendly categories
+ * Uses Lean's categories directly without mapping to custom UI categories
  * Lean Categories: https://www.leantech.me/product/financial-insights
  */
 
@@ -23,50 +23,93 @@ export const LEAN_CATEGORIES = {
   OTHER: "OTHER",
 } as const
 
-// UI categories used in your app
-export const UI_CATEGORIES = {
-  FOOD: "food",
-  SHOPPING: "shopping",
-  ENTERTAINMENT: "entertainment",
-  UTILITIES: "utilities",
-  TRANSPORT: "transport",
-  EDUCATION: "education",
-  HEALTH: "health",
-  CHARITY: "charity",
-  HOUSING: "housing",
-  INCOME: "income",
-  DEPOSIT: "deposit",
-  OTHER: "other",
-} as const
+// Category descriptions for UI display
+export const CATEGORY_DESCRIPTIONS = {
+  BANK_FEES_AND_CHARGES: "Bank fees and charges",
+  CHARITY: "Charitable causes",
+  EDUCATION: "Education (school, university, courses)",
+  ENTERTAINMENT: "Entertainment (cinema, Netflix)",
+  GOVERNMENT: "Government (taxes, fines)",
+  GROCERIES: "Food shopping",
+  HEALTH_AND_WELLBEING: "Health (prescriptions, wellbeing, yoga)",
+  LOANS_AND_INVESTMENT: "Loans and investments (dividends, loan repayments)",
+  RENT_AND_SERVICES: "Household utilities and rent",
+  RESTAURANTS_DINING: "Dining and takeaways",
+  RETAIL: "Shopping",
+  SALARY_AND_REVENUE: "Income sources",
+  TRANSFER: "Money movements (transfers, cash withdrawals)",
+  TRANSPORT: "Domestic travel (metro, cabs)",
+  TRAVEL: "International travel (hotels, flights)",
+  OTHER: "Uncategorized",
+}
 
 /**
- * Maps Lean's categories to your existing UI categories
+ * Format a Lean category for display
  */
-export const mapLeanCategoryToUI = (leanCategory: string | null): string => {
-  if (!leanCategory) {
-    return UI_CATEGORIES.OTHER
+export const formatCategoryName = (category: string | null): string => {
+  if (!category) return "Other"
+
+  // Convert from UPPER_SNAKE_CASE to Title Case With Spaces
+  return category
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ")
+}
+
+/**
+ * Get category color based on Lean category
+ */
+export const getCategoryColor = (category: string | null): string => {
+  if (!category) return "#AAAAAA"
+
+  const categoryColors = {
+    BANK_FEES_AND_CHARGES: "#607D8B", // Blue Grey
+    CHARITY: "#E91E63", // Pink
+    EDUCATION: "#9C27B0", // Purple
+    ENTERTAINMENT: "#673AB7", // Deep Purple
+    GOVERNMENT: "#3F51B5", // Indigo
+    GROCERIES: "#4CAF50", // Green
+    HEALTH_AND_WELLBEING: "#00BCD4", // Cyan
+    LOANS_AND_INVESTMENT: "#009688", // Teal
+    RENT_AND_SERVICES: "#FF5722", // Deep Orange
+    RESTAURANTS_DINING: "#FF9800", // Orange
+    RETAIL: "#FFC107", // Amber
+    SALARY_AND_REVENUE: "#8BC34A", // Light Green
+    TRANSFER: "#2196F3", // Blue
+    TRANSPORT: "#03A9F4", // Light Blue
+    TRAVEL: "#CDDC39", // Lime
+    OTHER: "#9E9E9E", // Grey
   }
 
-  const categoryMap: Record<string, string> = {
-    [LEAN_CATEGORIES.GROCERIES]: UI_CATEGORIES.FOOD,
-    [LEAN_CATEGORIES.RESTAURANTS_DINING]: UI_CATEGORIES.FOOD,
-    [LEAN_CATEGORIES.RETAIL]: UI_CATEGORIES.SHOPPING,
-    [LEAN_CATEGORIES.ENTERTAINMENT]: UI_CATEGORIES.ENTERTAINMENT,
-    [LEAN_CATEGORIES.TRAVEL]: UI_CATEGORIES.ENTERTAINMENT,
-    [LEAN_CATEGORIES.RENT_AND_SERVICES]: UI_CATEGORIES.UTILITIES,
-    [LEAN_CATEGORIES.TRANSPORT]: UI_CATEGORIES.TRANSPORT,
-    [LEAN_CATEGORIES.EDUCATION]: UI_CATEGORIES.EDUCATION,
-    [LEAN_CATEGORIES.HEALTH_AND_WELLBEING]: UI_CATEGORIES.HEALTH,
-    [LEAN_CATEGORIES.CHARITY]: UI_CATEGORIES.CHARITY,
-    [LEAN_CATEGORIES.SALARY_AND_REVENUE]: UI_CATEGORIES.INCOME,
-    [LEAN_CATEGORIES.LOANS_AND_INVESTMENT]: UI_CATEGORIES.INCOME,
-    [LEAN_CATEGORIES.TRANSFER]: UI_CATEGORIES.DEPOSIT,
-    [LEAN_CATEGORIES.BANK_FEES_AND_CHARGES]: UI_CATEGORIES.OTHER,
-    [LEAN_CATEGORIES.GOVERNMENT]: UI_CATEGORIES.OTHER,
-    [LEAN_CATEGORIES.OTHER]: UI_CATEGORIES.OTHER,
+  return categoryColors[category] || "#9E9E9E"
+}
+
+/**
+ * Get category emoji based on Lean category
+ */
+export const getCategoryEmoji = (category: string | null): string => {
+  if (!category) return "📋"
+
+  const categoryEmojis = {
+    BANK_FEES_AND_CHARGES: "🏦",
+    CHARITY: "❤️",
+    EDUCATION: "📚",
+    ENTERTAINMENT: "🎬",
+    GOVERNMENT: "🏛️",
+    GROCERIES: "🛒",
+    HEALTH_AND_WELLBEING: "🏥",
+    LOANS_AND_INVESTMENT: "📈",
+    RENT_AND_SERVICES: "🏠",
+    RESTAURANTS_DINING: "🍔",
+    RETAIL: "🛍️",
+    SALARY_AND_REVENUE: "💰",
+    TRANSFER: "💸",
+    TRANSPORT: "🚗",
+    TRAVEL: "✈️",
+    OTHER: "📋",
   }
 
-  return categoryMap[leanCategory.toUpperCase()] || UI_CATEGORIES.OTHER
+  return categoryEmojis[category] || "📋"
 }
 
 /**
@@ -79,7 +122,7 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
     console.log(
       `Using Lean category: ${transaction.lean_category} (confidence: ${transaction.lean_category_confidence})`,
     )
-    return mapLeanCategoryToUI(transaction.lean_category)
+    return transaction.lean_category
   }
 
   // Fallback to manual categorization for older transactions or when Lean data is unavailable
@@ -87,7 +130,7 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
 
   // If no description is provided, consider it uncategorized
   if (!description || description.trim() === "") {
-    return UI_CATEGORIES.OTHER
+    return LEAN_CATEGORIES.OTHER
   }
 
   const descriptionLower = description.toLowerCase()
@@ -98,33 +141,29 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       description,
     )
   ) {
-    return UI_CATEGORIES.DEPOSIT
+    return LEAN_CATEGORIES.TRANSFER
   }
 
   // Check for salary/income patterns
   if (/salary|wage|payroll|income|bonus|commission|freelance|consulting|contract payment/i.test(description)) {
-    return UI_CATEGORIES.INCOME
+    return LEAN_CATEGORIES.SALARY_AND_REVENUE
   }
-
-  // Check if this is a refund or reversal
-  const isRefundOrReversal = /refund|reversal|reimbursement|cashback|returned|money\s+back/i.test(description)
 
   // Define category keywords for fallback
   const categories = {
-    [UI_CATEGORIES.FOOD]: [
+    [LEAN_CATEGORIES.GROCERIES]: ["grocery", "supermarket", "food", "market", "fruit", "vegetable", "bakery"],
+    [LEAN_CATEGORIES.RESTAURANTS_DINING]: [
       "restaurant",
       "cafe",
       "coffee",
-      "grocery",
-      "food",
       "meal",
       "pizza",
       "burger",
-      "bakery",
-      "supermarket",
       "dining",
+      "takeaway",
+      "food delivery",
     ],
-    [UI_CATEGORIES.SHOPPING]: [
+    [LEAN_CATEGORIES.RETAIL]: [
       "shop",
       "store",
       "mall",
@@ -136,7 +175,7 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       "purchase",
       "online",
     ],
-    [UI_CATEGORIES.ENTERTAINMENT]: [
+    [LEAN_CATEGORIES.ENTERTAINMENT]: [
       "movie",
       "cinema",
       "theater",
@@ -153,10 +192,8 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       "streaming",
       "music",
       "video",
-      "play",
-      "show",
     ],
-    [UI_CATEGORIES.UTILITIES]: [
+    [LEAN_CATEGORIES.RENT_AND_SERVICES]: [
       "electric",
       "water",
       "gas",
@@ -167,8 +204,15 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       "utilities",
       "broadband",
       "telecom",
+      "rent",
+      "mortgage",
+      "apartment",
+      "house",
+      "housing",
+      "accommodation",
+      "property",
     ],
-    [UI_CATEGORIES.TRANSPORT]: [
+    [LEAN_CATEGORIES.TRANSPORT]: [
       "uber",
       "lyft",
       "taxi",
@@ -182,7 +226,7 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       "car",
       "vehicle",
     ],
-    [UI_CATEGORIES.EDUCATION]: [
+    [LEAN_CATEGORIES.EDUCATION]: [
       "school",
       "college",
       "university",
@@ -194,7 +238,7 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       "learning",
       "study",
     ],
-    [UI_CATEGORIES.HEALTH]: [
+    [LEAN_CATEGORIES.HEALTH_AND_WELLBEING]: [
       "doctor",
       "hospital",
       "medical",
@@ -205,41 +249,56 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
       "medicine",
       "insurance",
       "healthcare",
-      "protect plus",
-      "premium",
-      "coverage",
       "wellness",
+      "gym",
+      "fitness",
+      "spa",
     ],
-    [UI_CATEGORIES.CHARITY]: ["donation", "donate", "charity", "nonprofit", "ngo", "foundation", "giving"],
-    [UI_CATEGORIES.HOUSING]: [
-      "rent",
-      "mortgage",
-      "apartment",
-      "house",
-      "housing",
-      "accommodation",
-      "property",
-      "real estate",
-      "home",
+    [LEAN_CATEGORIES.CHARITY]: ["donation", "donate", "charity", "nonprofit", "ngo", "foundation", "giving"],
+    [LEAN_CATEGORIES.TRAVEL]: [
+      "hotel",
+      "flight",
+      "airline",
+      "booking",
+      "airbnb",
+      "travel",
+      "vacation",
+      "holiday",
+      "trip",
+      "tour",
+    ],
+    [LEAN_CATEGORIES.BANK_FEES_AND_CHARGES]: [
+      "fee",
+      "charge",
+      "interest",
+      "overdraft",
+      "bank charge",
+      "service fee",
+      "maintenance fee",
+    ],
+    [LEAN_CATEGORIES.GOVERNMENT]: [
+      "tax",
+      "fine",
+      "penalty",
+      "government",
+      "license",
+      "permit",
+      "registration",
+      "court",
+    ],
+    [LEAN_CATEGORIES.LOANS_AND_INVESTMENT]: [
+      "loan",
+      "investment",
+      "dividend",
+      "stock",
+      "bond",
+      "mutual fund",
+      "repayment",
+      "interest",
     ],
   }
 
-  // If it's a refund or reversal, try to determine the original category
-  if (isRefundOrReversal) {
-    // Check each category for keywords
-    for (const [category, keywords] of Object.entries(categories)) {
-      if (keywords.some((keyword) => descriptionLower.includes(keyword))) {
-        console.log(`Categorized refund/reversal "${description}" as ${category}`)
-        return category
-      }
-    }
-
-    // If we couldn't determine a specific category for the refund, use "other"
-    console.log(`Couldn't determine specific category for refund/reversal "${description}", using "other"`)
-    return UI_CATEGORIES.OTHER
-  }
-
-  // Regular categorization for non-refund transactions
+  // Check each category for keywords
   for (const [category, keywords] of Object.entries(categories)) {
     if (keywords.some((keyword) => descriptionLower.includes(keyword))) {
       return category
@@ -247,7 +306,7 @@ export const categorizeTransaction = (transaction: any, isPending?: boolean): st
   }
 
   // Default category
-  return UI_CATEGORIES.OTHER
+  return LEAN_CATEGORIES.OTHER
 }
 
 /**

@@ -4,7 +4,12 @@ import type React from "react"
 import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native"
 import { MaterialIcons } from "@expo/vector-icons"
 import { useTheme } from "../context/ThemeContext"
-import { categorizeTransaction } from "../utils/categorizer"
+import {
+  categorizeTransaction,
+  getCategoryColor,
+  getCategoryEmoji,
+  formatCategoryName,
+} from "../utils/categorizer"
 
 interface TransactionDetailModalProps {
   visible: boolean
@@ -54,44 +59,6 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ visible
   }
 
   const { date, time } = formatDateTime(transaction.timestamp || transaction.date || new Date().toISOString())
-
-  // Get category color
-  const getCategoryColor = (category: string): string => {
-    const categoryColors = {
-      food: "#FF5733",
-      transport: "#33A8FF",
-      utilities: "#33FFC1",
-      housing: "#8C33FF",
-      shopping: "#FF33A8",
-      health: "#33FF57",
-      education: "#FFC133",
-      entertainment: "#FF3333",
-      charity: "#33FF33",
-      income: "#27ae60",
-      deposit: "#2196F3",
-      other: "#AAAAAA",
-    }
-    return categoryColors[category.toLowerCase()] || "#AAAAAA"
-  }
-
-  // Get category emoji
-  const getCategoryEmoji = (category: string): string => {
-    const categoryEmojis = {
-      food: "🍔",
-      shopping: "🛍️",
-      entertainment: "🎬",
-      utilities: "💡",
-      transport: "🚗",
-      education: "📚",
-      health: "🏥",
-      charity: "❤️",
-      housing: "🏠",
-      income: "💰",
-      deposit: "📥",
-      other: "📋",
-    }
-    return categoryEmojis[category.toLowerCase()] || "📋"
-  }
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
@@ -146,19 +113,14 @@ const TransactionDetailModal: React.FC<TransactionDetailModalProps> = ({ visible
             <View style={styles.categoryContainer}>
               <View style={[styles.categoryBadge, { backgroundColor: getCategoryColor(category) }]}>
                 <Text style={styles.categoryText}>
-                  {getCategoryEmoji(category)} {category.charAt(0).toUpperCase() + category.slice(1)}
+                  {getCategoryEmoji(category)} {formatCategoryName(category)}
                 </Text>
               </View>
-              {transaction.lean_category && (
+              {transaction.lean_category_confidence && (
                 <View style={styles.leanCategoryInfo}>
-                  <Text style={[styles.leanCategoryLabel, isDarkMode && { color: "#3498db" }]}>
-                    Lean Category: {transaction.lean_category}
+                  <Text style={[styles.confidenceText, isDarkMode && { color: "#AAA" }]}>
+                    Confidence: {(transaction.lean_category_confidence * 100).toFixed(1)}%
                   </Text>
-                  {transaction.lean_category_confidence && (
-                    <Text style={[styles.confidenceText, isDarkMode && { color: "#AAA" }]}>
-                      Confidence: {(transaction.lean_category_confidence * 100).toFixed(1)}%
-                    </Text>
-                  )}
                 </View>
               )}
             </View>

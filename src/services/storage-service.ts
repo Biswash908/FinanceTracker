@@ -3,6 +3,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage"
 // Storage keys
 const ACCOUNTS_CACHE_PREFIX = "accounts_cache_" // Changed to support multiple entities
 const TRANSACTIONS_CACHE_PREFIX = "transactions_cache_"
+const BALANCES_CACHE_PREFIX = "balances_"
 const CACHE_EXPIRY_KEY = "cache_expiry"
 
 // Cache expiry time in milliseconds (default: 24 hours)
@@ -114,6 +115,47 @@ export class StorageService {
   }
 
   /**
+   * Cache account balances
+   */
+  static async saveBalances(balances: any[], totalBalance: number, entityIds: string[]): Promise<void> {
+    try {
+      const cacheKey = `${BALANCES_CACHE_PREFIX}${entityIds.sort().join("_")}`
+      const cacheData = {
+        balances,
+        totalBalance,
+        entityIds,
+        timestamp: Date.now(),
+      }
+      await AsyncStorage.setItem(cacheKey, JSON.stringify(cacheData))
+      console.log(`Cached ${balances.length} account balances`)
+    } catch (error) {
+      console.error("Error caching balances:", error)
+    }
+  }
+
+  /**
+   * Get cached account balances
+   */
+  static async getCachedBalances(entityIds: string[]): Promise<{
+    balances: any[]
+    totalBalance: number
+    entityIds: string[]
+    timestamp: number
+  } | null> {
+    try {
+      const cacheKey = `${BALANCES_CACHE_PREFIX}${entityIds.sort().join("_")}`
+      const cachedData = await AsyncStorage.getItem(cacheKey)
+      if (cachedData) {
+        return JSON.parse(cachedData)
+      }
+      return null
+    } catch (error) {
+      console.error("Error getting cached balances:", error)
+      return null
+    }
+  }
+
+  /**
    * Check if cache is still valid based on timestamp
    */
   static isCacheValid(timestamp: number, maxAge: number = DEFAULT_CACHE_EXPIRY): boolean {
@@ -134,6 +176,7 @@ export class StorageService {
         (key) =>
           key.startsWith(ACCOUNTS_CACHE_PREFIX) ||
           key.startsWith(TRANSACTIONS_CACHE_PREFIX) ||
+          key.startsWith(BALANCES_CACHE_PREFIX) ||
           key === CACHE_EXPIRY_KEY,
       )
 
@@ -171,6 +214,20 @@ export class StorageService {
   }
 
   /**
+   * Clear balance cache
+   */
+  static async clearBalanceCache(): Promise<void> {
+    try {
+      const keys = await AsyncStorage.getAllKeys()
+      const balanceKeys = keys.filter((key) => key.startsWith(BALANCES_CACHE_PREFIX))
+      await AsyncStorage.multiRemove(balanceKeys)
+      console.log("Balance cache cleared")
+    } catch (error) {
+      console.error("Error clearing balance cache:", error)
+    }
+  }
+
+  /**
    * Clear cache for a specific entity
    */
   static async clearEntityCache(entityId: string): Promise<void> {
@@ -180,7 +237,9 @@ export class StorageService {
       // Filter keys that contain this entity ID
       const entityCacheKeys = keys.filter(
         (key) =>
-          (key.startsWith(ACCOUNTS_CACHE_PREFIX) || key.startsWith(TRANSACTIONS_CACHE_PREFIX)) &&
+          (key.startsWith(ACCOUNTS_CACHE_PREFIX) || 
+           key.startsWith(TRANSACTIONS_CACHE_PREFIX) ||
+           key.startsWith(BALANCES_CACHE_PREFIX)) &&
           key.includes(entityId),
       )
 
@@ -203,7 +262,10 @@ export class StorageService {
 
       // Filter cache keys
       const cacheKeys = keys.filter(
-        (key) => key.startsWith(ACCOUNTS_CACHE_PREFIX) || key.startsWith(TRANSACTIONS_CACHE_PREFIX),
+        (key) => 
+          key.startsWith(ACCOUNTS_CACHE_PREFIX) || 
+          key.startsWith(TRANSACTIONS_CACHE_PREFIX) ||
+          key.startsWith(BALANCES_CACHE_PREFIX)
       )
 
       // Check each cache item
@@ -228,3 +290,5 @@ export class StorageService {
     }
   }
 }
+
+export default StorageService

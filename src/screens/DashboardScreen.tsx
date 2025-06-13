@@ -2,33 +2,52 @@
 
 import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native"
-import { ACCOUNT_ID, ENTITY_ID } from "@env"
 import { useTheme } from "../context/ThemeContext"
 import { useFocusEffect } from "@react-navigation/native"
+import { MaterialIcons } from "@expo/vector-icons"
 
 // Components
 import BalanceCard from "../components/BalanceCard"
-import CategoryChart from "../components/CategoryChart"
 import LeanWebView from "../components/LeanWebView"
+import DateRangeSelector from "../components/DateRangeSelector"
+import DashboardTransactionList from "../components/DashboardTransactionList"
+import ImprovedColumnChart from "../components/ImprovedColumnChart"
+import DashboardAccountSelector from "../components/DashboardAccountSelector"
 
 // Services and Utils
-import { fetchTransactions, fetchAccounts, clearTransactionsCache } from "../services/lean-api"
+import {
+  fetchAccounts,
+  clearTransactionsCache,
+  fetchTransactionsMultiAccount,
+  fetchAccountBalances,
+} from "../services/lean-api"
 import { calculateFinancials } from "../utils/categorizer"
-import { formatCurrency } from "../utils/formatters"
 import { leanEntityService } from "../services/lean-entity-service"
+import { AccountPersistenceService } from "../services/account-persistence"
+import { getCategoryColor, formatCategoryName } from "../utils/categorizer"
+
+// Date utils
+import { getFirstDayOfMonth, getCurrentDate, getDateRangeForPeriod } from "../utils/date-utils"
 
 const DashboardScreen = () => {
   const { isDarkMode } = useTheme()
 
   // State
   const [transactions, setTransactions] = useState([])
+  const [recentTransactions, setRecentTransactions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [timeRange, setTimeRange] = useState("month") // "week" or "month"
+  const [startDate, setStartDate] = useState(getFirstDayOfMonth())
+  const [endDate, setEndDate] = useState(getCurrentDate())
   const [entityId, setEntityId] = useState<string | null>(null)
-  const [accountId, setAccountId] = useState<string | null>(ACCOUNT_ID || null)
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
+  const [accounts, setAccounts] = useState([])
   const [lastRefresh, setLastRefresh] = useState(Date.now())
   const [showLeanWebView, setShowLeanWebView] = useState(false)
+  const [viewMode, setViewMode] = useState<"transactions" | "charts">("transactions")
+  const [selectedRange, setSelectedRange] = useState("this_month")
+  const [accountBalance, setAccountBalance] = useState(0)
+  const [balanceLoading, setBalanceLoading] = useState(false)
 
   // Check for bank connection when screen comes into focus
   useFocusEffect(
@@ -47,35 +66,67 @@ const DashboardScreen = () => {
         setEntityId(storedEntityId)
         setError(null)
 
-        // If we don't have a hardcoded account ID, fetch accounts to get one
-        if (!ACCOUNT_ID) {
-          try {
-            console.log("Fetching accounts to get account ID...")
-            const accounts = await fetchAccounts()
-            if (accounts && accounts.length > 0) {
-              const firstAccountId = accounts[0].id
-              console.log("Using first available account:", firstAccountId)
-              setAccountId(firstAccountId)
-            } else {
-              setError("No accounts found. Please try reconnecting your bank account.")
-            }
-          } catch (accountError) {
-            console.error("Error fetching accounts:", accountError)
-            setError("Error fetching accounts. Please try reconnecting your bank account.")
-          }
-        } else {
-          // Use hardcoded account ID
-          setAccountId(ACCOUNT_ID)
-        }
+        // Load accounts
+        await loadAccounts(storedEntityId)
       } else {
         console.log("No entity ID found")
         setEntityId(null)
-        setAccountId(ACCOUNT_ID || null)
+        setSelectedAccounts([])
+        setAccounts([])
         setError("No bank account connected. Please connect your bank account in Settings.")
       }
     } catch (err) {
       console.error("Error checking bank connection:", err)
       setError("Error checking bank connection status.")
+    }
+  }
+
+  // Load accounts function
+  const loadAccounts = async (currentEntityId?: string) => {
+    try {
+      const entityIdToUse = currentEntityId || entityId
+      if (!entityIdToUse) {
+        setError("No entity ID available. Please connect your bank account.")
+        return
+      }
+
+      console.log("Loading accounts...")
+      const accountsData = await fetchAccounts()
+
+      console.log(`Loaded ${accountsData.length} accounts`)
+      setAccounts(accountsData)
+
+      // Load saved account selection
+      const savedAccountIds = await AccountPersistenceService.loadSelectedAccounts()
+
+      if (savedAccountIds.length > 0) {
+        // Validate that saved accounts still exist
+        const validAccountIds = AccountPersistenceService.validateAccountIds(savedAccountIds, accountsData)
+
+        if (validAccountIds.length > 0) {
+          console.log("Restoring saved account selection:", validAccountIds)
+          setSelectedAccounts(validAccountIds)
+        } else {
+          // No valid saved accounts, select first account by default
+          if (accountsData.length > 0) {
+            const firstAccountId = accountsData[0].id
+            console.log("No valid saved accounts, selecting first account ID:", firstAccountId)
+            setSelectedAccounts([firstAccountId])
+            await AccountPersistenceService.saveSelectedAccounts([firstAccountId])
+          }
+        }
+      } else {
+        // No saved selection, select first account by default
+        if (accountsData.length > 0) {
+          const firstAccountId = accountsData[0].id
+          console.log("No saved selection, selecting first account ID:", firstAccountId)
+          setSelectedAccounts([firstAccountId])
+          await AccountPersistenceService.saveSelectedAccounts([firstAccountId])
+        }
+      }
+    } catch (err) {
+      console.error("Error loading accounts:", err)
+      setError(`Failed to load accounts: ${err.message}`)
     }
   }
 
@@ -90,61 +141,78 @@ const DashboardScreen = () => {
     return () => clearInterval(interval)
   }, [entityId])
 
-  // Get date range based on selected time range
-  const getDateRange = () => {
-    const now = new Date()
-    const endDate = now.toISOString().split("T")[0]
+  // Load account balances function
+  const loadAccountBalances = async () => {
+    try {
+      setBalanceLoading(true)
+      console.log("Loading account balances...")
 
-    let startDate
-    if (timeRange === "week") {
-      // Get first day of current week (Sunday)
-      const day = now.getDay() // 0 = Sunday, 1 = Monday, etc.
-      const diff = now.getDate() - day
-      startDate = new Date(now.setDate(diff)).toISOString().split("T")[0]
-    } else {
-      // Get first day of current month
-      startDate = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0]
+      const { balances, totalBalance } = await fetchAccountBalances()
+      console.log(`Loaded total balance: ${totalBalance}`)
+      setAccountBalance(totalBalance)
+    } catch (err) {
+      console.error("Error loading account balances:", err)
+      // Don't set error for balance loading, just log it
+    } finally {
+      setBalanceLoading(false)
     }
-
-    return { startDate, endDate }
   }
 
-  // Fetch transactions when entity ID and account ID are available, or time range changes
+  // Fetch transactions when entity ID, selected accounts, or date range changes
   useEffect(() => {
-    if (!entityId || !accountId) {
-      console.log("Waiting for entity ID and account ID...", { entityId, accountId })
+    if (!entityId || selectedAccounts.length === 0) {
+      console.log("Waiting for entity ID and selected accounts...", { entityId, selectedAccounts })
       setLoading(false)
       return
     }
 
-    const loadTransactions = async () => {
+    const loadData = async () => {
       try {
         setLoading(true)
         setError(null)
 
-        const { startDate, endDate } = getDateRange()
-        console.log(`Loading transactions for account ${accountId} from ${startDate} to ${endDate}`)
+        // Load account balances
+        await loadAccountBalances()
+
+        console.log(`Loading transactions from ${startDate} to ${endDate} for ${selectedAccounts.length} accounts`)
 
         // Clear cache to ensure fresh data
         await clearTransactionsCache()
 
-        const data = await fetchTransactions(ENTITY_ID, accountId, startDate, endDate)
+        // Fetch transactions for selected accounts
+        const data = await fetchTransactionsMultiAccount(selectedAccounts, startDate, endDate)
         console.log(`Received ${data.transactions?.length || 0} transactions`)
         setTransactions(data.transactions || [])
+
+        // Also fetch recent transactions (today and yesterday) for the "Recent Transactions" section
+        const today = new Date()
+        const yesterday = new Date(today)
+        yesterday.setDate(yesterday.getDate() - 1)
+
+        const recentStartDate = yesterday.toISOString().split("T")[0]
+        const recentEndDate = today.toISOString().split("T")[0]
+
+        console.log(`Loading recent transactions from ${recentStartDate} to ${recentEndDate}`)
+        const recentData = await fetchTransactionsMultiAccount(selectedAccounts, recentStartDate, recentEndDate)
+        console.log(`Received ${recentData.transactions?.length || 0} recent transactions`)
+        setRecentTransactions(recentData.transactions || [])
       } catch (err) {
-        console.error("Error loading transactions:", err)
+        console.error("Error loading data:", err)
         setError(err.message)
       } finally {
         setLoading(false)
       }
     }
 
-    loadTransactions()
-  }, [entityId, accountId, timeRange, lastRefresh])
+    loadData()
+  }, [entityId, selectedAccounts, startDate, endDate, lastRefresh])
 
   // Calculate financial summary
   const financialSummary = calculateFinancials(transactions || [])
-  const { income, expenses, balance } = financialSummary
+  const { income, expenses, balance, inflowCategories, expenseCategories } = financialSummary
+
+  // Calculate total balance from income and expenses if account balance is 0
+  const displayBalance = accountBalance !== 0 ? accountBalance : balance
 
   // Handle refresh
   const handleRefresh = async () => {
@@ -158,6 +226,15 @@ const DashboardScreen = () => {
 
     // Trigger data reload
     setLastRefresh(Date.now())
+  }
+
+  // Handle account selection change
+  const handleAccountsChange = async (accountIds: string[]) => {
+    console.log("Selected account IDs:", accountIds)
+    setSelectedAccounts(accountIds)
+
+    // Save selected accounts to persistent storage
+    await AccountPersistenceService.saveSelectedAccounts(accountIds)
   }
 
   // Handle Connect Bank button
@@ -176,18 +253,39 @@ const DashboardScreen = () => {
     }
   }
 
-  // Update the category data calculation to use expenseCategories
-  const categoryData = Object.entries(financialSummary.expenseCategories || financialSummary.categoryTotals)
+  // Handle date range change from DateRangeSelector
+  const handleRangeChange = useCallback((range: string) => {
+    console.log(`Dashboard: Date range changed to ${range}`)
+    setSelectedRange(range)
+
+    const { startDate: newStartDate, endDate: newEndDate } = getDateRangeForPeriod(range)
+    setStartDate(newStartDate)
+    setEndDate(newEndDate)
+  }, [])
+
+  // Prepare category data for charts
+  const expenseCategoryData = Object.entries(expenseCategories || {})
     .filter(([_, amount]) => amount > 0)
     .map(([category, amount]) => ({
-      name: category.charAt(0).toUpperCase() + category.slice(1),
+      name: formatCategoryName(category),
       amount,
       color: getCategoryColor(category),
+      category,
     }))
     .sort((a, b) => b.amount - a.amount)
 
-  // Show connection prompt if no entity ID or account ID
-  if ((!entityId || !accountId) && !loading) {
+  const incomeCategoryData = Object.entries(inflowCategories || {})
+    .filter(([_, amount]) => amount > 0)
+    .map(([category, amount]) => ({
+      name: formatCategoryName(category),
+      amount,
+      color: getCategoryColor(category),
+      category,
+    }))
+    .sort((a, b) => b.amount - a.amount)
+
+  // Show connection prompt if no entity ID or selected accounts
+  if ((!entityId || selectedAccounts.length === 0) && !loading) {
     return (
       <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
         <View style={styles.header}>
@@ -220,7 +318,10 @@ const DashboardScreen = () => {
   }
 
   return (
-    <ScrollView style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}>
+    <ScrollView
+      style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}
+      showsVerticalScrollIndicator={false}
+    >
       {/* Header */}
       <View style={styles.header}>
         <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Dashboard</Text>
@@ -232,44 +333,15 @@ const DashboardScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {/* Time Range Toggle */}
-      <View style={[styles.timeRangeContainer, isDarkMode && { backgroundColor: "#333" }]}>
-        <TouchableOpacity
-          style={[
-            styles.timeRangeButton,
-            timeRange === "week" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeTimeRangeButton),
-          ]}
-          onPress={() => setTimeRange("week")}
-        >
-          <Text
-            style={[
-              styles.timeRangeText,
-              isDarkMode && { color: "#AAA" },
-              timeRange === "week" && (isDarkMode ? { color: "#FFF" } : styles.activeTimeRangeText),
-            ]}
-          >
-            This Week
-          </Text>
-        </TouchableOpacity>
+      {/* Account Selector */}
+      <DashboardAccountSelector
+        accounts={accounts}
+        selectedAccounts={selectedAccounts}
+        onAccountsChange={handleAccountsChange}
+      />
 
-        <TouchableOpacity
-          style={[
-            styles.timeRangeButton,
-            timeRange === "month" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeTimeRangeButton),
-          ]}
-          onPress={() => setTimeRange("month")}
-        >
-          <Text
-            style={[
-              styles.timeRangeText,
-              isDarkMode && { color: "#AAA" },
-              timeRange === "month" && (isDarkMode ? { color: "#FFF" } : styles.activeTimeRangeText),
-            ]}
-          >
-            This Month
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {/* Date Range Picker */}
+      <DateRangeSelector selectedRange={selectedRange} onRangeChange={handleRangeChange} isDarkMode={isDarkMode} />
 
       {/* Error message */}
       {error && (
@@ -288,10 +360,11 @@ const DashboardScreen = () => {
           {/* Balance Cards */}
           <View style={styles.balanceCardsContainer}>
             <BalanceCard
-              title="Balance"
-              amount={balance}
-              type={balance >= 0 ? "positive" : "negative"}
+              title="Total Balance"
+              amount={displayBalance}
+              type={displayBalance >= 0 ? "positive" : "negative"}
               isDarkMode={isDarkMode}
+              loading={balanceLoading}
             />
 
             <View style={styles.incomeExpenseRow}>
@@ -313,39 +386,99 @@ const DashboardScreen = () => {
             </View>
           </View>
 
-          {/* Category Breakdown */}
-          <View style={[styles.categorySection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
-            <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Spending by Category</Text>
+          {/* View Mode Toggle */}
+          <View style={[styles.viewModeContainer, isDarkMode && { backgroundColor: "#333" }]}>
+            <TouchableOpacity
+              style={[
+                styles.viewModeButton,
+                viewMode === "transactions" &&
+                  (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeViewModeButton),
+              ]}
+              onPress={() => setViewMode("transactions")}
+            >
+              <MaterialIcons
+                name="list"
+                size={18}
+                color={viewMode === "transactions" ? (isDarkMode ? "#FFF" : "#333") : isDarkMode ? "#AAA" : "#666"}
+              />
+              <Text
+                style={[
+                  styles.viewModeText,
+                  isDarkMode && { color: "#AAA" },
+                  viewMode === "transactions" && (isDarkMode ? { color: "#FFF" } : styles.activeViewModeText),
+                ]}
+              >
+                Transactions
+              </Text>
+            </TouchableOpacity>
 
-            {categoryData.length > 0 ? (
-              <>
-                <CategoryChart data={categoryData} isDarkMode={isDarkMode} />
-
-                <View style={styles.categoryList}>
-                  {categoryData.map((category) => (
-                    <View
-                      key={category.name}
-                      style={[styles.categoryItem, isDarkMode && { borderBottomColor: "#333" }]}
-                    >
-                      <View style={styles.categoryNameContainer}>
-                        <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
-                        <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>{category.name}</Text>
-                      </View>
-                      <Text style={[styles.categoryAmount, { color: category.color }]}>
-                        {formatCurrency(category.amount, "AED")}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              </>
-            ) : (
-              <View style={styles.emptyContainer}>
-                <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
-                  No spending data available for this period.
-                </Text>
-              </View>
-            )}
+            <TouchableOpacity
+              style={[
+                styles.viewModeButton,
+                viewMode === "charts" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeViewModeButton),
+              ]}
+              onPress={() => setViewMode("charts")}
+            >
+              <MaterialIcons
+                name="bar-chart"
+                size={18}
+                color={viewMode === "charts" ? (isDarkMode ? "#FFF" : "#333") : isDarkMode ? "#AAA" : "#666"}
+              />
+              <Text
+                style={[
+                  styles.viewModeText,
+                  isDarkMode && { color: "#AAA" },
+                  viewMode === "charts" && (isDarkMode ? { color: "#FFF" } : styles.activeViewModeText),
+                ]}
+              >
+                Charts
+              </Text>
+            </TouchableOpacity>
           </View>
+
+          {viewMode === "transactions" ? (
+            /* Transactions View */
+            <DashboardTransactionList
+              transactions={transactions.slice(0, 20)} // Show latest 20 transactions
+              loading={loading}
+              onViewAll={() => {
+                /* Navigate to transactions screen */
+              }}
+            />
+          ) : (
+            /* Charts View */
+            <>
+              {/* Income Column Chart - Show first */}
+              <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+                <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Inflow Breakdown</Text>
+
+                {incomeCategoryData.length > 0 ? (
+                  <ImprovedColumnChart data={incomeCategoryData} isIncome={true} />
+                ) : (
+                  <View style={styles.emptyContainer}>
+                    <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+                      No inflow data available for this period.
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              {/* Expense Column Chart - Show second */}
+              <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+                <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Expense Breakdown</Text>
+
+                {expenseCategoryData.length > 0 ? (
+                  <ImprovedColumnChart data={expenseCategoryData} isIncome={false} />
+                ) : (
+                  <View style={styles.emptyContainer}>
+                    <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+                      No expense data available for this period.
+                    </Text>
+                  </View>
+                )}
+              </View>
+            </>
+          )}
         </>
       )}
 
@@ -353,26 +486,6 @@ const DashboardScreen = () => {
       {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
     </ScrollView>
   )
-}
-
-// Update getCategoryColor to include deposit
-const getCategoryColor = (category) => {
-  const colors = {
-    income: "#4CAF50",
-    deposit: "#2196F3",
-    food: "#FF9800",
-    shopping: "#9C27B0",
-    entertainment: "#2196F3",
-    utilities: "#607D8B",
-    transport: "#4CAF50",
-    education: "#3F51B5",
-    health: "#F44336",
-    charity: "#8BC34A",
-    housing: "#795548",
-    other: "#9E9E9E",
-  }
-
-  return colors[category] || colors.other
 }
 
 const styles = StyleSheet.create({
@@ -403,35 +516,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "500",
   },
-  timeRangeContainer: {
-    flexDirection: "row",
-    backgroundColor: "#e0e0e0",
-    borderRadius: 25,
-    marginBottom: 24,
-    padding: 4,
-  },
-  timeRangeButton: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: "center",
-    borderRadius: 21,
-  },
-  activeTimeRangeButton: {
-    backgroundColor: "#fff",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 1.5,
-    elevation: 2,
-  },
-  timeRangeText: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: "#666",
-  },
-  activeTimeRangeText: {
-    color: "#333",
-  },
   balanceCardsContainer: {
     marginBottom: 24,
   },
@@ -439,7 +523,69 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     marginTop: 16,
   },
-  categorySection: {
+  viewModeContainer: {
+    flexDirection: "row",
+    backgroundColor: "#e0e0e0",
+    borderRadius: 25,
+    marginBottom: 24,
+    padding: 4,
+  },
+  viewModeButton: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderRadius: 21,
+    flexDirection: "row",
+    justifyContent: "center",
+  },
+  activeViewModeButton: {
+    backgroundColor: "#fff",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
+    elevation: 2,
+  },
+  viewModeText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#666",
+    marginLeft: 6,
+  },
+  activeViewModeText: {
+    color: "#333",
+  },
+  recentTransactionsContainer: {
+    marginBottom: 24,
+  },
+  transactionDateGroup: {
+    marginBottom: 16,
+  },
+  dateHeader: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#666",
+    marginBottom: 8,
+    paddingHorizontal: 4,
+  },
+  viewAllButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: "#f5f5f5",
+    borderWidth: 1,
+    borderColor: "#e0e0e0",
+    marginTop: 8,
+  },
+  viewAllButtonText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: "#3498db",
+    marginRight: 8,
+  },
+  chartSection: {
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 16,

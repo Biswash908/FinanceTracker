@@ -6,6 +6,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { MaterialIcons } from "@expo/vector-icons"
 import { useTheme } from "../context/ThemeContext"
 import AsyncStorage from "@react-native-async-storage/async-storage"
+import { getCategoryColor, getCategoryEmoji, formatCategoryName } from "../utils/categorizer"
 
 // Sort options
 type SortOption = "amount_lowest" | "amount_highest" | "alphabetical_asc" | "alphabetical_desc"
@@ -22,7 +23,7 @@ interface FinancialSummaryProps {
   currency?: string
   inflowCategories?: Record<string, number>
   expenseCategories?: Record<string, number>
-  selectedType?: string[] // NEW: Add this prop to track selected transaction type
+  selectedType?: string[]
 }
 
 const FinancialSummary: React.FC<FinancialSummaryProps> = ({
@@ -34,7 +35,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
   currency = "AED",
   inflowCategories = {},
   expenseCategories = {},
-  selectedType = ["All"], // NEW: Default to "All"
+  selectedType = ["All"],
 }) => {
   const [expanded, setExpanded] = useState(true)
   const { isDarkMode } = useTheme()
@@ -84,16 +85,16 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
         case "amount_highest":
           return amountB - amountA
         case "alphabetical_asc":
-          return categoryA.localeCompare(categoryB)
+          return formatCategoryName(categoryA).localeCompare(formatCategoryName(categoryB))
         case "alphabetical_desc":
-          return categoryB.localeCompare(categoryA)
+          return formatCategoryName(categoryB).localeCompare(formatCategoryName(categoryA))
         default:
           return amountB - amountA
       }
     })
   }
 
-  // NEW: Determine what sections to show based on selected transaction type
+  // Determine what sections to show based on selected transaction type
   const showInflowSection = selectedType.includes("All") || selectedType.includes("Inflow")
   const showExpenseSection = selectedType.includes("All") || selectedType.includes("Expense")
 
@@ -106,35 +107,13 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
   const expenseData =
     expenseCategories && Object.keys(expenseCategories).length > 0 ? expenseCategories : categoryTotals
   const sortedExpenseCategories = showExpenseSection
-    ? sortCategories(
-        Object.entries(expenseData).filter(([category, amount]) => amount > 0 && category.toLowerCase() !== "income"),
-      )
+    ? sortCategories(Object.entries(expenseData).filter(([category, amount]) => amount > 0))
     : []
 
   // Handle sort option selection
   const handleSortSelect = (option: SortOption) => {
     setSortOption(option)
     setDropdownVisible(false)
-  }
-
-  // Get category color
-  const getCategoryColor = (category: string): string => {
-    const categoryColors = {
-      deposit: "#2196F3",
-      income: "#4CAF50",
-      food: "#FF5733",
-      transport: "#33A8FF",
-      utilities: "#33FFC1",
-      housing: "#8C33FF",
-      shopping: "#FF33A8",
-      health: "#33FF57",
-      education: "#FFC133",
-      entertainment: "#FF3333",
-      charity: "#33FF33",
-      other: "#AAAAAA",
-    }
-
-    return categoryColors[category.toLowerCase()] || "#AAAAAA"
   }
 
   // Get sort option display name
@@ -193,7 +172,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
             </Text>
           </View>
 
-          {/* NEW: Inflow Categories Section - Only show if inflow should be visible */}
+          {/* Inflow Categories Section - Only show if inflow should be visible */}
           {showInflowSection && (
             <>
               <View style={styles.sectionTitleRow}>
@@ -248,7 +227,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
                         ]}
                       />
                       <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>
-                        {category.charAt(0).toUpperCase() + category.slice(1)}
+                        {getCategoryEmoji(category)} {formatCategoryName(category)}
                       </Text>
                     </View>
                     <Text style={[styles.categoryAmount, styles.incomeText]}>+{formatCurrency(amount, currency)}</Text>
@@ -262,7 +241,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
             </>
           )}
 
-          {/* NEW: Expense Categories Section - Only show if expense should be visible */}
+          {/* Expense Categories Section - Only show if expense should be visible */}
           {showExpenseSection && (
             <>
               <View style={[styles.sectionTitleRow, { marginTop: showInflowSection ? 20 : 0 }]}>
@@ -282,7 +261,7 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
                         ]}
                       />
                       <Text style={[styles.categoryName, isDarkMode && { color: "#DDD" }]}>
-                        {category.charAt(0).toUpperCase() + category.slice(1)}
+                        {getCategoryEmoji(category)} {formatCategoryName(category)}
                       </Text>
                     </View>
                     <Text style={styles.categoryAmount}>-{formatCurrency(amount, currency)}</Text>
@@ -439,6 +418,7 @@ const styles = StyleSheet.create({
   categoryNameContainer: {
     flexDirection: "row",
     alignItems: "center",
+    flex: 1,
   },
   categoryColorDot: {
     width: 12,
@@ -457,10 +437,10 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: "#666",
+    color: "#888",
     fontStyle: "italic",
     textAlign: "center",
-    marginTop: 10,
+    marginVertical: 8,
   },
   overlay: {
     position: "absolute",
@@ -469,7 +449,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     backgroundColor: "transparent",
-    zIndex: 999, // Make sure this is lower than dropdown's z-index
+    zIndex: 9999, // Make sure this is lower than dropdown's z-index
   },
 })
 

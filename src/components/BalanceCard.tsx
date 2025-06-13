@@ -1,5 +1,5 @@
+import { View, Text, StyleSheet, ActivityIndicator } from "react-native"
 import type React from "react"
-import { View, Text, StyleSheet } from "react-native"
 
 interface BalanceCardProps {
   title: string
@@ -8,12 +8,21 @@ interface BalanceCardProps {
   style?: object
   isDarkMode?: boolean
   currency?: string
+  loading?: boolean
 }
 
-const BalanceCard: React.FC<BalanceCardProps> = ({ title, amount, type, style, isDarkMode, currency = "AED" }) => {
-  // Format currency
+const BalanceCard: React.FC<BalanceCardProps> = ({
+  title,
+  amount,
+  type,
+  style,
+  isDarkMode,
+  currency = "AED",
+  loading = false,
+}) => {
+  // Format currency with commas
   const formatCurrency = (amount, currency = "AED") => {
-    return `${Math.abs(amount).toFixed(2)} ${currency}`
+    return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`
   }
 
   // Get color based on type
@@ -46,6 +55,24 @@ const BalanceCard: React.FC<BalanceCardProps> = ({ title, amount, type, style, i
     }
   }
 
+  const styles = StyleSheet.create({
+    container: {
+      padding: 16,
+      borderRadius: 8,
+      width: "100%",
+      marginBottom: 16,
+    },
+    title: {
+      fontSize: 16,
+      fontWeight: "600",
+      marginBottom: 8,
+    },
+    amount: {
+      fontSize: 24,
+      fontWeight: "bold",
+    },
+  })
+
   return (
     <View
       style={[
@@ -56,34 +83,15 @@ const BalanceCard: React.FC<BalanceCardProps> = ({ title, amount, type, style, i
       ]}
     >
       <Text style={[styles.title, isDarkMode && { color: "#DDD" }]}>{title}</Text>
-      <Text style={[styles.amount, { color: getColor() }]}>
-        {type === "income" || type === "positive" ? "+" : "-"} {formatCurrency(Math.abs(amount), currency)}
-      </Text>
+      {loading ? (
+        <ActivityIndicator size="small" color={getColor()} />
+      ) : (
+        <Text style={[styles.amount, { color: getColor() }]}>
+          {type === "income" || type === "positive" ? "+" : "-"} {formatCurrency(Math.abs(amount), currency)}
+        </Text>
+      )}
     </View>
   )
 }
-
-const styles = StyleSheet.create({
-  container: {
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  title: {
-    fontSize: 16,
-    color: "#666",
-    marginBottom: 8,
-  },
-  amount: {
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-})
 
 export default BalanceCard

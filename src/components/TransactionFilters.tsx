@@ -6,6 +6,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-nati
 import { useTheme } from "../context/ThemeContext"
 import CategoryBadge from "./CategoryBadge"
 import { MaterialIcons } from "@expo/vector-icons"
+import { LEAN_CATEGORIES, formatCategoryName } from "../utils/categorizer"
 
 interface TransactionFiltersProps {
   selectedCategory: string[]
@@ -27,26 +28,10 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
   const [isProcessingTypeChange, setIsProcessingTypeChange] = useState(false)
   const [categoryFiltersExpanded, setCategoryFiltersExpanded] = useState(true) // Collapsible state
 
-  // Updated categories to match Lean's categorization mapping
-  const categoryFilters = [
-    "All",
-    ...[
-      "Charity",
-      "Deposit",
-      "Education",
-      "Entertainment",
-      "Food",
-      "Health",
-      "Housing",
-      "Income",
-      "Other",
-      "Shopping",
-      "Transport",
-      "Utilities",
-    ].sort(),
-  ]
+  // Use Lean categories directly
+  const categoryFilters = ["All", ...Object.values(LEAN_CATEGORIES).sort()]
 
-  // Changed "Income" to "Inflow" in transaction types
+  // Transaction types
   const transactionTypes = ["All", "Inflow", "Expense", "Pending"]
 
   // Handle transaction type selection
@@ -206,6 +191,7 @@ const TransactionFilters: React.FC<TransactionFiltersProps> = ({
                   category={category}
                   isSelected={isCategorySelected(category)}
                   onPress={() => handleCategoryPress(category)}
+                  displayName={category === "All" ? "All" : formatCategoryName(category)}
                 />
               ))}
             </View>

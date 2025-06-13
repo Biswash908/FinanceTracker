@@ -5,7 +5,7 @@ import { memo } from "react"
 import { View, Text, StyleSheet, TouchableOpacity } from "react-native"
 import { formatDate } from "../utils/formatters"
 import { useTheme } from "../context/ThemeContext"
-import { categorizeTransaction } from "../utils/categorizer"
+import { categorizeTransaction, getCategoryEmoji, formatCategoryName } from "../utils/categorizer"
 
 interface TransactionCardProps {
   transaction: any
@@ -42,26 +42,6 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
     return description.length > maxLength ? description.substring(0, maxLength) + "..." : description
   }
 
-  // Get emoji for category
-  const getCategoryEmoji = (category: string): string => {
-    const categoryEmojis = {
-      food: "🍔",
-      shopping: "🛍️",
-      entertainment: "🎬",
-      utilities: "💡",
-      transport: "🚗",
-      education: "📚",
-      health: "🏥",
-      charity: "❤️",
-      housing: "🏠",
-      income: "💰",
-      deposit: "📥",
-      other: "📋",
-    }
-
-    return categoryEmojis[category.toLowerCase()] || "📋"
-  }
-
   return (
     <TouchableOpacity
       style={[
@@ -88,15 +68,15 @@ const TransactionCard: React.FC<TransactionCardProps> = ({ transaction, category
       <View style={styles.footer}>
         <View style={styles.leftFooter}>
           <Text style={[styles.category, isDarkMode && { backgroundColor: "#444", color: "#CCC" }]}>
-            {getCategoryEmoji(finalCategory)} {finalCategory}
+            {getCategoryEmoji(finalCategory)} {formatCategoryName(finalCategory)}
           </Text>
           <Text style={[styles.accountName, isDarkMode && { backgroundColor: "#333", color: "#AAA" }]}>
             {accountName}
           </Text>
-          {/* Show Lean category info if available */}
-          {transaction.lean_category && (
+          {/* Show Lean category confidence if available */}
+          {transaction.lean_category_confidence && (
             <Text style={[styles.leanCategory, isDarkMode && { backgroundColor: "#2C5282", color: "#FFF" }]}>
-              Lean: {transaction.lean_category}
+              {Math.round(transaction.lean_category_confidence * 100)}% confidence
             </Text>
           )}
         </View>
