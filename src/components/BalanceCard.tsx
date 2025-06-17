@@ -71,6 +71,10 @@ const BalanceCard: React.FC<BalanceCardProps> = ({
       fontSize: 24,
       fontWeight: "bold",
     },
+    smallAmount: {
+    fontSize: 15, // smaller size for income/expense
+    fontWeight: "bold",
+  },
   })
 
   return (
@@ -86,9 +90,14 @@ const BalanceCard: React.FC<BalanceCardProps> = ({
       {loading ? (
         <ActivityIndicator size="small" color={getColor()} />
       ) : (
-        <Text style={[styles.amount, { color: getColor() }]}>
-          {type === "income" || type === "positive" ? "+" : "-"} {formatCurrency(Math.abs(amount), currency)}
-        </Text>
+<Text
+  style={[
+    type === "income" || type === "expense" ? styles.smallAmount : styles.amount,
+    { color: getColor() }
+  ]}
+>
+  {type === "income" || type === "positive" ? "+" : "-"} {formatCurrency(Math.abs(amount), currency)}
+</Text>
       )}
     </View>
   )

@@ -25,9 +25,7 @@ import * as Sharing from "expo-sharing"
 
 // Components
 import TransactionCard from "../components/TransactionCard"
-import DateRangePicker from "../components/DateRangePicker"
 import FinancialSummary from "../components/FinancialSummary"
-import AccountSelector from "../components/AccountSelector"
 import TransactionFilters from "../components/TransactionFilters"
 import CustomScrollbar from "../components/CustomScrollbar"
 import TransactionDetailModal from "../components/TransactionDetailModal"
@@ -36,12 +34,11 @@ import TransactionDetailModal from "../components/TransactionDetailModal"
 import { fetchTransactions, fetchAccounts, clearAllCache, clearTransactionsCache } from "../services/lean-api"
 import { categorizeTransaction, calculateFinancials } from "../utils/categorizer"
 import { StorageService } from "../services/storage-service"
-import { AccountPersistenceService } from "../services/account-persistence"
 import { useTheme } from "../context/ThemeContext"
 import { leanEntityService } from "../services/lean-entity-service"
 
-// Import the date utility functions
-import { formatDateToString, getFirstDayOfMonth, getCurrentDate } from "../utils/date-utils"
+// Context
+import { useFilters } from "../context/FilterContext"
 
 // Suppress the warning about nested scrollviews
 LogBox.ignoreLogs(["VirtualizedLists should never be nested"])
@@ -69,17 +66,16 @@ const transactionSortOptions = [
 const TransactionsScreen = () => {
   const { isDarkMode } = useTheme()
 
+  // Use shared filter context
+  const { startDate, endDate, selectedAccounts, accounts, setAccounts } = useFilters()
+
   // State
   const [transactions, setTransactions] = useState([])
-  const [accounts, setAccounts] = useState([])
-  const [selectedAccounts, setSelectedAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [accountsLoading, setAccountsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState(null)
-  const [startDate, setStartDate] = useState(getFirstDayOfMonth())
-  const [endDate, setEndDate] = useState(getCurrentDate())
   const [searchQuery, setSearchQuery] = useState("")
   const [isSearchVisible, setIsSearchVisible] = useState(false)
   // Update to use array for multiple category selection
@@ -124,7 +120,7 @@ const TransactionsScreen = () => {
   const searchInputRef = useRef(null)
   const searchWidthAnim = useRef(new Animated.Value(0)).current
 
-  // Check for entity ID when screen comes into focus
+  // Check for bank connection when screen comes into focus
   useFocusEffect(
     useCallback(() => {
       checkBankConnection()
@@ -149,7 +145,6 @@ const TransactionsScreen = () => {
         console.log("No entity ID found")
         setEntityId(null)
         setAccounts([])
-        setSelectedAccounts([])
         setTransactions([])
         setError("No bank account connected. Please connect your bank account in Settings.")
       }
@@ -335,62 +330,6 @@ const TransactionsScreen = () => {
     }
   }, [selectedAccounts, startDate, endDate, entityId])
 
-  // Add a function to force refresh the date range
-  const forceRefreshDateRange = useCallback(() => {
-    console.log("Forcing date range refresh to reload transactions")
-    // Make a copy of the current dates
-    const currentStartDate = startDate
-    const currentEndDate = endDate
-
-    // Clear transactions cache
-    clearTransactionsCache().catch((err) => console.error("Error clearing transactions cache:", err))
-
-    // Set the same dates again to trigger the useEffect
-    setStartDate(currentStartDate)
-    setEndDate(currentEndDate)
-  }, [startDate, endDate])
-
-  // Handle date range change
-  const handleDateRangeChange = useCallback(
-    (newStartDate, newEndDate) => {
-      console.log(`Date range changed: ${newStartDate} to ${newEndDate}`)
-      console.log(`Types: startDate=${typeof newStartDate}, endDate=${typeof newEndDate}`)
-
-      // Ensure we're working with string dates in YYYY-MM-DD format
-      let formattedStartDate = newStartDate
-      let formattedEndDate = newEndDate
-
-      // If we received Date objects instead of strings, format them
-      if (newStartDate instanceof Date) {
-        formattedStartDate = formatDateToString(newStartDate)
-      }
-
-      if (newEndDate instanceof Date) {
-        formattedEndDate = formatDateToString(newEndDate)
-      }
-
-      console.log(`Formatted dates: ${formattedStartDate} to ${formattedEndDate}`)
-
-      // Validate that we have proper date strings in YYYY-MM-DD format
-      const dateRegex = /^\d{4}-\d{2}-\d{2}$/
-      if (!dateRegex.test(formattedStartDate) || !dateRegex.test(formattedEndDate)) {
-        console.error("Invalid date format. Expected YYYY-MM-DD")
-        return
-      }
-
-      // Force clear transactions cache when dates change
-      if (startDate !== formattedStartDate || endDate !== formattedEndDate) {
-        console.log("Date range changed, clearing transactions cache")
-        clearTransactionsCache().catch((err) => console.error("Error clearing transactions cache:", err))
-      }
-
-      setStartDate(formattedStartDate)
-      setEndDate(formattedEndDate)
-      // The useEffect will trigger a reload
-    },
-    [startDate, endDate],
-  )
-
   // Load accounts function - now uses dynamic entity ID and loads saved selection
   const loadAccounts = async (currentEntityId?: string) => {
     try {
@@ -408,40 +347,6 @@ const TransactionsScreen = () => {
 
       console.log(`Loaded ${accountsData.length} accounts`)
       setAccounts(accountsData)
-
-      // Load saved account selection
-      const savedAccountIds = await AccountPersistenceService.loadSelectedAccounts()
-
-      if (savedAccountIds.length > 0) {
-        // Validate that saved accounts still exist
-        const validAccountIds = AccountPersistenceService.validateAccountIds(savedAccountIds, accountsData)
-
-        if (validAccountIds.length > 0) {
-          console.log("Restoring saved account selection:", validAccountIds)
-          setSelectedAccounts(validAccountIds)
-
-          // If some accounts were removed, save the updated list
-          if (validAccountIds.length !== savedAccountIds.length) {
-            await AccountPersistenceService.saveSelectedAccounts(validAccountIds)
-          }
-        } else {
-          // No valid saved accounts, select first account by default
-          if (accountsData.length > 0) {
-            const firstAccountId = accountsData[0].id
-            console.log("No valid saved accounts, selecting first account ID:", firstAccountId)
-            setSelectedAccounts([firstAccountId])
-            await AccountPersistenceService.saveSelectedAccounts([firstAccountId])
-          }
-        }
-      } else {
-        // No saved selection, select first account by default
-        if (accountsData.length > 0) {
-          const firstAccountId = accountsData[0].id
-          console.log("No saved selection, selecting first account ID:", firstAccountId)
-          setSelectedAccounts([firstAccountId])
-          await AccountPersistenceService.saveSelectedAccounts([firstAccountId])
-        }
-      }
     } catch (err) {
       console.error("Error loading accounts:", err)
       setError(`Failed to load accounts: ${err.message}`)
@@ -671,17 +576,6 @@ const TransactionsScreen = () => {
       )
     }
   }, [loadingMore, hasMore, loadAttemptFailed, selectedAccounts, accountLoadingState])
-
-  // Handle account selection change - SAVES TO STORAGE
-  const handleAccountsChange = useCallback(async (accountIds) => {
-    console.log("Selected account IDs:", accountIds)
-    setSelectedAccounts(accountIds)
-
-    // Save selected accounts to persistent storage
-    await AccountPersistenceService.saveSelectedAccounts(accountIds)
-
-    // The useEffect will trigger a reload
-  }, [])
 
   // Handle cache clearing
   const handleClearCache = useCallback(async () => {
@@ -918,64 +812,7 @@ const TransactionsScreen = () => {
           <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Transactions</Text>
         </View>
 
-        {/* Account Selector */}
-        {accountsLoading ? (
-          <View
-            style={[styles.loadingAccountsContainer, isDarkMode && { backgroundColor: "#2A2A2A", borderColor: "#444" }]}
-          >
-            <ActivityIndicator size="small" color="#3498db" />
-            <Text style={[styles.loadingAccountsText, isDarkMode && { color: "#CCC" }]}>Loading accounts...</Text>
-          </View>
-        ) : (
-          <AccountSelector
-            accounts={accounts}
-            selectedAccounts={selectedAccounts}
-            onAccountsChange={handleAccountsChange}
-          />
-        )}
-
-        {/* Date Range Picker with Refresh Button */}
-        <View style={{ flexDirection: "row", alignItems: "center" }}>
-          <View style={{ flex: 1 }}>
-            <DateRangePicker startDate={startDate} endDate={endDate} onDateRangeChange={handleDateRangeChange} />
-          </View>
-        </View>
-
-        {/* Search Bar - Collapsible from left to right */}
-        <View style={styles.searchContainer}>
-          <View style={styles.searchRow}>
-            <TouchableOpacity
-              style={[
-                styles.searchButton,
-                isDarkMode && { backgroundColor: "#2A2A2A" },
-                isSearchVisible && { marginRight: 8 },
-              ]}
-              onPress={toggleSearch}
-            >
-              <MaterialIcons
-                name={isSearchVisible ? "close" : "search"}
-                size={24}
-                color={isDarkMode ? "#DDD" : "#333"}
-              />
-            </TouchableOpacity>
-            {isSearchVisible && (
-              <Animated.View style={[styles.searchInputContainer, { width: searchWidth }]}>
-                <TextInput
-                  ref={searchInputRef}
-                  style={[
-                    styles.searchInput,
-                    isDarkMode && { backgroundColor: "#2A2A2A", color: "#FFF", borderColor: "#444" },
-                  ]}
-                  placeholder="Search transactions..."
-                  placeholderTextColor={isDarkMode ? "#888" : "#999"}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  clearButtonMode="while-editing"
-                />
-              </Animated.View>
-            )}
-          </View>
-        </View>
+        {/* Remove the search container from here */}
 
         {/* Filters (without export button) */}
         <TransactionFilters
@@ -1012,6 +849,42 @@ const TransactionsScreen = () => {
           expenseCategories={financialSummary.expenseCategories}
           selectedType={selectedType}
         />
+
+        {/* Search Bar - Moved here */}
+        <View style={styles.searchContainer}>
+          <View style={styles.searchRow}>
+            <TouchableOpacity
+              style={[
+                styles.searchButton,
+                isDarkMode && { backgroundColor: "#2A2A2A" },
+                isSearchVisible && { marginRight: 8 },
+              ]}
+              onPress={toggleSearch}
+            >
+              <MaterialIcons
+                name={isSearchVisible ? "close" : "search"}
+                size={24}
+                color={isDarkMode ? "#DDD" : "#333"}
+              />
+            </TouchableOpacity>
+            {isSearchVisible && (
+              <Animated.View style={[styles.searchInputContainer, { width: searchWidth }]}>
+                <TextInput
+                  ref={searchInputRef}
+                  style={[
+                    styles.searchInput,
+                    isDarkMode && { backgroundColor: "#2A2A2A", color: "#FFF", borderColor: "#444" },
+                  ]}
+                  placeholder="Search transactions..."
+                  placeholderTextColor={isDarkMode ? "#888" : "#999"}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  clearButtonMode="while-editing"
+                />
+              </Animated.View>
+            )}
+          </View>
+        </View>
 
         {/* Error */}
         {error && (
@@ -1275,26 +1148,6 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.5,
-  },
-  loadingAccountsContainer: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  loadingAccountsText: {
-    marginLeft: 10,
-    color: "#666",
   },
   searchContainer: {
     marginVertical: 10,
@@ -1573,36 +1426,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 4,
     elevation: 5,
-  },
-  refreshButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: "#f0f0f0",
-    justifyContent: "center",
-    alignItems: "center",
-    marginLeft: 8,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  lastRefreshContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  lastRefreshText: {
-    fontSize: 12,
-    color: "#666",
-    fontStyle: "italic",
-  },
-  transactionCountText: {
-    fontSize: 12,
-    color: "#666",
-    fontStyle: "italic",
   },
   connectionPrompt: {
     backgroundColor: "#fff",

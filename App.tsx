@@ -8,6 +8,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { MaterialIcons } from "@expo/vector-icons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import { View, StyleSheet, ActivityIndicator, Alert, Text } from "react-native"
+import { FilterProvider } from "./src/context/FilterContext"
 
 // Screens
 import DashboardScreen from "./src/screens/DashboardScreen"
@@ -260,6 +261,7 @@ const App = () => {
 
   return (
     <SafeAreaProvider>
+      <FilterProvider>
       <ThemeProvider>
         <ThemedNavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -283,6 +285,7 @@ const App = () => {
           </Stack.Navigator>
         </ThemedNavigationContainer>
       </ThemeProvider>
+      </FilterProvider>
     </SafeAreaProvider>
   )
 }
