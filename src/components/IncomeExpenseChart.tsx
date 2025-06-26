@@ -28,7 +28,7 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
   }
 
   // Calculate chart dimensions
-  const chartHeight = 200
+  const chartHeight = 220
   const maxAmount = Math.max(income, Math.abs(expenses))
   const columnWidth = Math.min(80, (screenWidth - 120) / 2) // Two columns with spacing
 

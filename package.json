@@ -21,6 +21,7 @@
     "babel-preset-expo": "~13.0.0",
     "expo": "~53.0.7",
     "expo-file-system": "~18.1.9",
+    "expo-haptics": "~14.1.4",
     "expo-media-library": "~17.1.7",
     "expo-sharing": "~13.1.5",
     "expo-status-bar": "~2.2.3",

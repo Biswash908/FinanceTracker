@@ -14,6 +14,8 @@ import AccountSelector from "../components/AccountSelector"
 import TrendChart from "../components/TrendChart"
 import IncomeExpenseChart from "../components/IncomeExpenseChart"
 import CombinedCategoryChart from "../components/CombinedCategoryChart"
+import { ErrorBoundary } from "../components/ErrorBoundary"
+import { ProgressiveLoader } from "../components/ProgressiveLoader"
 
 // Services and Utils
 import {
@@ -21,6 +23,7 @@ import {
   clearTransactionsCache,
   fetchTransactionsMultiAccount,
   fetchAccountBalances,
+  fetchTransactions,
 } from "../services/lean-api"
 import { calculateFinancials } from "../utils/categorizer"
 import { leanEntityService } from "../services/lean-entity-service"
@@ -33,8 +36,17 @@ const DashboardScreen = () => {
   const { isDarkMode } = useTheme()
 
   // Use shared filter context
-  const { startDate, endDate, handleDateRangeChange, selectedAccounts, handleAccountsChange, accounts, setAccounts } =
-    useFilters()
+  const {
+    startDate,
+    endDate,
+    handleDateRangeChange,
+    selectedAccounts,
+    handleAccountsChange,
+    accounts,
+    setAccounts,
+    isInitialized,
+    hasSavedSelection,
+  } = useFilters()
 
   // State
   const [transactions, setTransactions] = useState([])
@@ -47,6 +59,7 @@ const DashboardScreen = () => {
   const [viewMode, setViewMode] = useState<"trend" | "charts">("trend")
   const [accountBalance, setAccountBalance] = useState(0)
   const [balanceLoading, setBalanceLoading] = useState(false)
+  const [accountsLoaded, setAccountsLoaded] = useState(false)
 
   // Check for bank connection when screen comes into focus
   useFocusEffect(
@@ -57,29 +70,27 @@ const DashboardScreen = () => {
 
   const checkBankConnection = async () => {
     try {
-      console.log("Checking bank connection...")
+      console.log("DashboardScreen: Checking bank connection...")
       const storedEntityId = await leanEntityService.getEntityId()
 
       if (storedEntityId) {
-        console.log("Found entity ID:", storedEntityId)
+        console.log("DashboardScreen: Found entity ID:", storedEntityId)
         setEntityId(storedEntityId)
         setError(null)
-
-        // Load accounts
         await loadAccounts(storedEntityId)
       } else {
-        console.log("No entity ID found")
+        console.log("DashboardScreen: No entity ID found")
         setEntityId(null)
         setAccounts([])
         setError("No bank account connected. Please connect your bank account in Settings.")
       }
     } catch (err) {
-      console.error("Error checking bank connection:", err)
+      console.error("DashboardScreen: Error checking bank connection:", err)
       setError("Error checking bank connection status.")
     }
   }
 
-  // Load accounts function
+  // FIXED: Load accounts function - FilterContext handles auto-selection
   const loadAccounts = async (currentEntityId?: string) => {
     try {
       const entityIdToUse = currentEntityId || entityId
@@ -88,58 +99,70 @@ const DashboardScreen = () => {
         return
       }
 
-      console.log("Loading accounts...")
+      console.log("DashboardScreen: Loading accounts...")
       const accountsData = await fetchAccounts()
 
-      console.log(`Loaded ${accountsData.length} accounts`)
+      console.log(`DashboardScreen: Loaded ${accountsData.length} accounts`)
+      console.log(
+        "DashboardScreen: Account IDs:",
+        accountsData.map((acc) => acc.id),
+      )
       setAccounts(accountsData)
 
-      // If no accounts are selected and we have accounts, select the first one
-      if (selectedAccounts.length === 0 && accountsData.length > 0) {
-        const firstAccountId = accountsData[0].id
-        console.log("No selected accounts, selecting first account ID:", firstAccountId)
-        await handleAccountsChange([firstAccountId])
-      }
+      // FilterContext will handle validation and auto-selection
+      console.log("DashboardScreen: Accounts loaded, FilterContext will handle selection validation")
     } catch (err) {
-      console.error("Error loading accounts:", err)
+      console.error("DashboardScreen: Error loading accounts:", err)
       setError(`Failed to load accounts: ${err.message}`)
     }
   }
-
-  // Periodically check bank connection only if no entityId is found
-  useEffect(() => {
-    if (entityId) return
-
-    const interval = setInterval(() => {
-      checkBankConnection()
-    }, 3000)
-
-    return () => clearInterval(interval)
-  }, [entityId])
 
   // Load account balances function
   const loadAccountBalances = async () => {
     try {
       setBalanceLoading(true)
-      console.log("Loading account balances...")
+      console.log("DashboardScreen: Loading account balances...")
 
       const { balances, totalBalance } = await fetchAccountBalances()
-      console.log(`Loaded total balance: ${totalBalance}`)
+      console.log(`DashboardScreen: Loaded total balance: ${totalBalance}`)
       setAccountBalance(totalBalance)
     } catch (err) {
-      console.error("Error loading account balances:", err)
-      // Don't set error for balance loading, just log it
+      console.error("DashboardScreen: Error loading account balances:", err)
     } finally {
       setBalanceLoading(false)
     }
   }
 
-  // Fetch transactions when entity ID, selected accounts, or date range changes
+  // Enhanced data loading with proper account validation
   useEffect(() => {
-    if (!entityId || selectedAccounts.length === 0) {
-      console.log("Waiting for entity ID and selected accounts...", { entityId, selectedAccounts })
+    if (!entityId || !isInitialized) {
+      console.log("DashboardScreen: Waiting for entity ID and FilterContext initialization...", {
+        entityId,
+        isInitialized,
+      })
       setLoading(false)
       return
+    }
+
+    if (selectedAccounts.length === 0) {
+      console.log("DashboardScreen: No accounts selected, waiting for account selection...")
+      setLoading(false)
+      return
+    }
+
+    // FIXED: Validate that selected accounts exist in available accounts
+    const validSelectedAccounts = selectedAccounts.filter((accountId) =>
+      accounts.some((account) => account.id === accountId),
+    )
+
+    if (validSelectedAccounts.length === 0) {
+      console.log("DashboardScreen: No valid accounts in selection, waiting for valid selection...")
+      setLoading(false)
+      return
+    }
+
+    if (validSelectedAccounts.length !== selectedAccounts.length) {
+      console.log("DashboardScreen: Some selected accounts are invalid, using valid ones only:", validSelectedAccounts)
     }
 
     const loadData = async () => {
@@ -147,20 +170,81 @@ const DashboardScreen = () => {
         setLoading(true)
         setError(null)
 
-        // Load account balances
         await loadAccountBalances()
 
-        console.log(`Loading transactions from ${startDate} to ${endDate} for ${selectedAccounts.length} accounts`)
-
-        // Clear cache to ensure fresh data
+        console.log(
+          `DashboardScreen: Loading transactions from ${startDate} to ${endDate} for ${validSelectedAccounts.length} valid accounts`,
+        )
         await clearTransactionsCache()
 
-        // Fetch transactions for selected accounts
-        const data = await fetchTransactionsMultiAccount(selectedAccounts, startDate, endDate)
-        console.log(`Received ${data.transactions?.length || 0} transactions`)
-        setTransactions(data.transactions || [])
+        // Enhanced transaction fetching - use only valid accounts
+        const allTransactions = []
+        const TRANSACTIONS_PER_PAGE = 100
+        const MAX_PAGES_PER_ACCOUNT = 100
 
-        // Also fetch recent transactions (today and yesterday) for the "Recent Transactions" section
+        for (const accountId of validSelectedAccounts) {
+          // Double-check account exists
+          const account = accounts.find((acc) => acc.id === accountId)
+          if (!account) {
+            console.error(`DashboardScreen: Account ${accountId} not found in available accounts, skipping`)
+            continue
+          }
+
+          console.log(`DashboardScreen: Fetching all transactions for account ${accountId} (${account.name})`)
+          let page = 1
+          let hasMore = true
+          let accountTransactions = 0
+
+          while (hasMore && page <= MAX_PAGES_PER_ACCOUNT) {
+            try {
+              console.log(`DashboardScreen: Fetching page ${page} for account ${accountId}`)
+              const result = await fetchTransactions(
+                entityId,
+                accountId,
+                startDate,
+                endDate,
+                page,
+                TRANSACTIONS_PER_PAGE,
+              )
+
+              const pageTransactions = result.transactions || []
+              console.log(
+                `DashboardScreen: Page ${page}: Received ${pageTransactions.length} transactions for account ${accountId}`,
+              )
+
+              if (pageTransactions.length > 0) {
+                const enhancedTransactions = pageTransactions.map((transaction) => ({
+                  ...transaction,
+                  account_name: account.name,
+                  account_type: account.type,
+                  id:
+                    transaction.id ||
+                    `${transaction.account_id}-${transaction.transaction_id || ""}-${Math.random().toString(36).substring(2, 10)}`,
+                }))
+
+                allTransactions.push(...enhancedTransactions)
+                accountTransactions += pageTransactions.length
+              }
+
+              hasMore = pageTransactions.length === TRANSACTIONS_PER_PAGE && result.hasMore !== false
+              page++
+
+              if (pageTransactions.length < TRANSACTIONS_PER_PAGE) {
+                hasMore = false
+              }
+            } catch (error) {
+              console.error(`DashboardScreen: Error fetching page ${page} for account ${accountId}:`, error)
+              hasMore = false
+            }
+          }
+
+          console.log(`DashboardScreen: Total transactions fetched for account ${accountId}: ${accountTransactions}`)
+        }
+
+        console.log(`DashboardScreen: Total transactions fetched across all valid accounts: ${allTransactions.length}`)
+        setTransactions(allTransactions)
+
+        // Load recent transactions - use only valid accounts
         const today = new Date()
         const yesterday = new Date(today)
         yesterday.setDate(yesterday.getDate() - 1)
@@ -168,12 +252,12 @@ const DashboardScreen = () => {
         const recentStartDate = yesterday.toISOString().split("T")[0]
         const recentEndDate = today.toISOString().split("T")[0]
 
-        console.log(`Loading recent transactions from ${recentStartDate} to ${recentEndDate}`)
-        const recentData = await fetchTransactionsMultiAccount(selectedAccounts, recentStartDate, recentEndDate)
-        console.log(`Received ${recentData.transactions?.length || 0} recent transactions`)
+        console.log(`DashboardScreen: Loading recent transactions from ${recentStartDate} to ${recentEndDate}`)
+        const recentData = await fetchTransactionsMultiAccount(validSelectedAccounts, recentStartDate, recentEndDate)
+        console.log(`DashboardScreen: Received ${recentData.transactions?.length || 0} recent transactions`)
         setRecentTransactions(recentData.transactions || [])
       } catch (err) {
-        console.error("Error loading data:", err)
+        console.error("DashboardScreen: Error loading data:", err)
         setError(err.message)
       } finally {
         setLoading(false)
@@ -181,26 +265,19 @@ const DashboardScreen = () => {
     }
 
     loadData()
-  }, [entityId, selectedAccounts, startDate, endDate, lastRefresh])
+  }, [entityId, selectedAccounts, startDate, endDate, lastRefresh, isInitialized, accounts])
 
   // Calculate financial summary
   const financialSummary = calculateFinancials(transactions || [])
   const { income, expenses, balance, inflowCategories, expenseCategories } = financialSummary
 
-  // Calculate total balance from income and expenses if account balance is 0
   const displayBalance = accountBalance !== 0 ? accountBalance : balance
 
   // Handle refresh
   const handleRefresh = async () => {
-    console.log("Manual refresh triggered")
-
-    // Clear cache first
+    console.log("DashboardScreen: Manual refresh triggered")
     await clearTransactionsCache()
-
-    // Force re-check of bank connection
     await checkBankConnection()
-
-    // Trigger data reload
     setLastRefresh(Date.now())
   }
 
@@ -214,7 +291,6 @@ const DashboardScreen = () => {
     setShowLeanWebView(false)
 
     if (status === "SUCCESS") {
-      // Reload the dashboard data
       await checkBankConnection()
       setLastRefresh(Date.now())
     }
@@ -239,37 +315,7 @@ const DashboardScreen = () => {
       color: getCategoryColor(category),
       category,
     }))
-    .sort((a, b) => b.amount - a.amount)
-
-  // Add this function before the return statement
-  const generateTrendData = () => {
-    if (!transactions || transactions.length === 0) return []
-
-    // Group transactions by date and calculate running balance
-    const dateMap = new Map()
-    let runningBalance = 0
-
-    // Sort transactions by date
-    const sortedTransactions = [...transactions].sort(
-      (a, b) => new Date(a.timestamp || a.date).getTime() - new Date(b.timestamp || b.date).getTime(),
-    )
-
-    sortedTransactions.forEach((transaction) => {
-      const date = new Date(transaction.timestamp || transaction.date).toISOString().split("T")[0]
-      const amount = Number.parseFloat(transaction.amount || 0)
-
-      if (!dateMap.has(date)) {
-        dateMap.set(date, { date, amount: 0, balance: runningBalance })
-      }
-
-      const dayData = dateMap.get(date)
-      dayData.amount += amount
-      runningBalance += amount
-      dayData.balance = runningBalance
-    })
-
-    return Array.from(dateMap.values())
-  }
+    .sort((a, b) => a.amount - b.amount)
 
   // Show connection prompt if no entity ID or selected accounts
   if ((!entityId || selectedAccounts.length === 0) && !loading) {
@@ -298,149 +344,181 @@ const DashboardScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Lean WebView Modal */}
         {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
       </ScrollView>
     )
   }
 
   return (
-    <ScrollView
-      style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}
-      showsVerticalScrollIndicator={false}
-    >
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Dashboard</Text>
-        <TouchableOpacity
-          style={[styles.refreshButton, isDarkMode && { backgroundColor: "#2C5282" }]}
-          onPress={handleRefresh}
-        >
-          <Text style={styles.refreshButtonText}>Refresh</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Account Selector */}
-      <AccountSelector
-        accounts={accounts}
-        selectedAccounts={selectedAccounts}
-        onAccountsChange={handleAccountsChange}
-      />
-
-      {/* Date Range Picker */}
-      <DateRangePicker startDate={startDate} endDate={endDate} onDateRangeChange={handleDateRangeChange} />
-
-      {/* Add spacing */}
-      <View style={{ height: 24 }} />
-
-      {/* Balance Cards */}
-      <View style={styles.balanceCardsContainer}>
-        <BalanceCard
-          title="Total Balance"
-          amount={displayBalance}
-          type={displayBalance >= 0 ? "positive" : "negative"}
-          isDarkMode={isDarkMode}
-          loading={balanceLoading}
-        />
-
-        <View style={styles.incomeExpenseRow}>
-          <BalanceCard
-            title="Income"
-            amount={income}
-            type="income"
-            style={{ flex: 1, marginRight: 8 }}
-            isDarkMode={isDarkMode}
-          />
-
-          <BalanceCard
-            title="Expenses"
-            amount={expenses}
-            type="expense"
-            style={{ flex: 1, marginLeft: 8 }}
-            isDarkMode={isDarkMode}
-          />
-        </View>
-      </View>
-
-      {/* View Mode Toggle */}
-      <View style={[styles.viewModeContainer, isDarkMode && { backgroundColor: "#333" }]}>
-        <TouchableOpacity
-          style={[
-            styles.viewModeButton,
-            viewMode === "trend" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeViewModeButton),
-          ]}
-          onPress={() => setViewMode("trend")}
-        >
-          <MaterialIcons
-            name="trending-up"
-            size={18}
-            color={viewMode === "trend" ? (isDarkMode ? "#FFF" : "#333") : isDarkMode ? "#AAA" : "#666"}
-          />
-          <Text
-            style={[
-              styles.viewModeText,
-              isDarkMode && { color: "#AAA" },
-              viewMode === "trend" && (isDarkMode ? { color: "#FFF" } : styles.activeViewModeText),
-            ]}
+    <ErrorBoundary>
+      <ScrollView
+        style={[styles.container, isDarkMode && { backgroundColor: "#121212" }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Dashboard</Text>
+          <TouchableOpacity
+            style={[styles.refreshButton, isDarkMode && { backgroundColor: "#2C5282" }]}
+            onPress={handleRefresh}
           >
-            Trend
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[
-            styles.viewModeButton,
-            viewMode === "charts" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeViewModeButton),
-          ]}
-          onPress={() => setViewMode("charts")}
-        >
-          <MaterialIcons
-            name="bar-chart"
-            size={18}
-            color={viewMode === "charts" ? (isDarkMode ? "#FFF" : "#333") : isDarkMode ? "#AAA" : "#666"}
-          />
-          <Text
-            style={[
-              styles.viewModeText,
-              isDarkMode && { color: "#AAA" },
-              viewMode === "charts" && (isDarkMode ? { color: "#FFF" } : styles.activeViewModeText),
-            ]}
-          >
-            Charts
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {viewMode === "trend" ? (
-        /* Trend View */
-        <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
-          <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Balance Trend</Text>
-          <TrendChart transactions={transactions} isDarkMode={isDarkMode} />
+            <Text style={styles.refreshButtonText}>Refresh</Text>
+          </TouchableOpacity>
         </View>
-      ) : (
-        /* Charts View */
-        <>
-          {/* Income vs Expenses Chart - Show first */}
-          <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
-            <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Income vs Expenses</Text>
-            <IncomeExpenseChart income={income} expenses={expenses} isDarkMode={isDarkMode} />
-          </View>
 
-          {/* Combined Category Chart - Show second */}
-          <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
-            <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Category Breakdown</Text>
-            <CombinedCategoryChart
-              inflowData={incomeCategoryData}
-              expenseData={expenseCategoryData}
+        {/* Account Selector */}
+        <ErrorBoundary>
+          <AccountSelector
+            accounts={accounts}
+            selectedAccounts={selectedAccounts}
+            onAccountsChange={handleAccountsChange}
+          />
+        </ErrorBoundary>
+
+        {/* Date Range Picker */}
+        <ErrorBoundary>
+          <DateRangePicker startDate={startDate} endDate={endDate} onDateRangeChange={handleDateRangeChange} />
+        </ErrorBoundary>
+
+        <View style={{ height: 24 }} />
+
+        {/* Balance Cards */}
+        <ErrorBoundary>
+          <View style={styles.balanceCardsContainer}>
+            <BalanceCard
+              title="Total Balance"
+              amount={displayBalance}
+              type={displayBalance >= 0 ? "positive" : "negative"}
               isDarkMode={isDarkMode}
+              loading={balanceLoading}
             />
-          </View>
-        </>
-      )}
 
-      {/* Lean WebView Modal */}
-      {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
-    </ScrollView>
+            <View style={styles.incomeExpenseRow}>
+              <BalanceCard
+                title="Income"
+                amount={income}
+                type="income"
+                style={{ flex: 1, marginRight: 8 }}
+                isDarkMode={isDarkMode}
+              />
+
+              <BalanceCard
+                title="Expenses"
+                amount={expenses}
+                type="expense"
+                style={{ flex: 1, marginLeft: 8 }}
+                isDarkMode={isDarkMode}
+              />
+            </View>
+          </View>
+        </ErrorBoundary>
+
+        {/* View Mode Toggle */}
+        <View style={[styles.viewModeContainer, isDarkMode && { backgroundColor: "#333" }]}>
+          <TouchableOpacity
+            style={[
+              styles.viewModeButton,
+              viewMode === "trend" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeViewModeButton),
+            ]}
+            onPress={() => setViewMode("trend")}
+          >
+            <MaterialIcons
+              name="trending-up"
+              size={18}
+              color={viewMode === "trend" ? (isDarkMode ? "#FFF" : "#333") : isDarkMode ? "#AAA" : "#666"}
+            />
+            <Text
+              style={[
+                styles.viewModeText,
+                isDarkMode && { color: "#AAA" },
+                viewMode === "trend" && (isDarkMode ? { color: "#FFF" } : styles.activeViewModeText),
+              ]}
+            >
+              Trend
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.viewModeButton,
+              viewMode === "charts" && (isDarkMode ? { backgroundColor: "#2A2A2A" } : styles.activeViewModeButton),
+            ]}
+            onPress={() => setViewMode("charts")}
+          >
+            <MaterialIcons
+              name="bar-chart"
+              size={18}
+              color={viewMode === "charts" ? (isDarkMode ? "#FFF" : "#333") : isDarkMode ? "#AAA" : "#666"}
+            />
+            <Text
+              style={[
+                styles.viewModeText,
+                isDarkMode && { color: "#AAA" },
+                viewMode === "charts" && (isDarkMode ? { color: "#FFF" } : styles.activeViewModeText),
+              ]}
+            >
+              Charts
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {viewMode === "trend" ? (
+          /* Trend View */
+          <ErrorBoundary>
+            <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+              <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Balance Trend</Text>
+              <TrendChart
+                selectedAccounts={selectedAccounts}
+                startDate={startDate}
+                endDate={endDate}
+                isDarkMode={isDarkMode}
+              />
+            </View>
+          </ErrorBoundary>
+        ) : (
+          /* Charts View with Progressive Loading */
+          <ErrorBoundary>
+            <ProgressiveLoader
+              data={[
+                { type: "income-expense", income, expenses },
+                { type: "categories", inflowData: incomeCategoryData, expenseData: expenseCategoryData },
+              ]}
+              renderItem={(item, index) => {
+                if (item.type === "income-expense") {
+                  return (
+                    <View
+                      key={index}
+                      style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}
+                    >
+                      <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Income vs Expenses</Text>
+                      <IncomeExpenseChart income={item.income} expenses={item.expenses} isDarkMode={isDarkMode} />
+                    </View>
+                  )
+                } else {
+                  return (
+                    <View
+                      key={index}
+                      style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}
+                    >
+                      <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Category Breakdown</Text>
+                      <CombinedCategoryChart
+                        inflowData={item.inflowData}
+                        expenseData={item.expenseData}
+                        isDarkMode={isDarkMode}
+                      />
+                    </View>
+                  )
+                }
+              }}
+              batchSize={1}
+              loadingDelay={100}
+            />
+          </ErrorBoundary>
+        )}
+
+        {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
+      </ScrollView>
+    </ErrorBoundary>
   )
 }
 
@@ -511,25 +589,6 @@ const styles = StyleSheet.create({
   activeViewModeText: {
     color: "#333",
   },
-  trendContainer: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 32,
-    marginBottom: 24,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  trendText: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-  },
   chartSection: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -548,35 +607,6 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#333",
     marginBottom: 16,
-  },
-  loadingContainer: {
-    padding: 32,
-    alignItems: "center",
-  },
-  loadingText: {
-    marginTop: 12,
-    fontSize: 16,
-    color: "#666",
-  },
-  errorContainer: {
-    padding: 16,
-    backgroundColor: "#ffebee",
-    borderRadius: 12,
-    marginBottom: 16,
-  },
-  errorText: {
-    color: "#c62828",
-    fontSize: 15,
-  },
-  emptyContainer: {
-    padding: 32,
-    alignItems: "center",
-  },
-  emptyText: {
-    textAlign: "center",
-    fontSize: 16,
-    color: "#666",
-    lineHeight: 24,
   },
   connectionPrompt: {
     backgroundColor: "#fff",

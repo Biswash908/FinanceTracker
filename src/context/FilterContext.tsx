@@ -21,6 +21,10 @@ interface FilterContextType {
   // Accounts data
   accounts: any[]
   setAccounts: (accounts: any[]) => void
+
+  // Initialization state
+  isInitialized: boolean
+  hasSavedSelection: boolean
 }
 
 const FilterContext = createContext<FilterContextType | undefined>(undefined)
@@ -46,6 +50,88 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({ children }) => {
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
   const [accounts, setAccounts] = useState<any[]>([])
 
+  // Initialization tracking
+  const [isInitialized, setIsInitialized] = useState(false)
+  const [hasSavedSelection, setHasSavedSelection] = useState(false)
+
+  // FIXED: Load saved selections immediately on mount
+  useEffect(() => {
+    const initializeContext = async () => {
+      try {
+        console.log("FilterContext: Initializing and loading saved selections...")
+
+        const savedAccountIds = await AccountPersistenceService.loadSelectedAccounts()
+
+        if (savedAccountIds.length > 0) {
+          console.log("FilterContext: Found saved account selection:", savedAccountIds)
+          setSelectedAccounts(savedAccountIds)
+          setHasSavedSelection(true)
+        } else {
+          console.log("FilterContext: No saved account selection found")
+          setHasSavedSelection(false)
+        }
+      } catch (error) {
+        console.error("FilterContext: Error loading saved account selection:", error)
+        setHasSavedSelection(false)
+      } finally {
+        setIsInitialized(true)
+        console.log("FilterContext: Initialization complete")
+      }
+    }
+
+    initializeContext()
+  }, [])
+
+  // FIXED: Validate saved selections when accounts are loaded
+  useEffect(() => {
+    if (accounts.length > 0 && isInitialized) {
+      console.log("FilterContext: Validating saved account selection against loaded accounts...")
+      console.log("FilterContext: Current selected accounts:", selectedAccounts)
+      console.log(
+        "FilterContext: Available account IDs:",
+        accounts.map((acc) => acc.id),
+      )
+
+      if (selectedAccounts.length > 0) {
+        const validAccountIds = AccountPersistenceService.validateAccountIds(selectedAccounts, accounts)
+
+        if (validAccountIds.length !== selectedAccounts.length) {
+          console.log("FilterContext: Some saved accounts are no longer valid")
+          console.log(
+            "FilterContext: Invalid accounts:",
+            selectedAccounts.filter((id) => !validAccountIds.includes(id)),
+          )
+          console.log("FilterContext: Valid accounts:", validAccountIds)
+
+          if (validAccountIds.length === 0) {
+            console.log("FilterContext: No valid accounts found, clearing selection")
+            setSelectedAccounts([])
+            setHasSavedSelection(false)
+            // Clear the invalid saved selection
+            AccountPersistenceService.saveSelectedAccounts([])
+          } else {
+            console.log("FilterContext: Updating to valid accounts only:", validAccountIds)
+            setSelectedAccounts(validAccountIds)
+            // Save the corrected selection
+            AccountPersistenceService.saveSelectedAccounts(validAccountIds)
+          }
+        } else {
+          console.log("FilterContext: All saved accounts are valid")
+        }
+      }
+    }
+  }, [accounts, isInitialized])
+
+  // FIXED: Auto-select first account if no valid selection exists after validation
+  useEffect(() => {
+    if (accounts.length > 0 && isInitialized && selectedAccounts.length === 0 && !hasSavedSelection) {
+      console.log("FilterContext: No valid account selection, auto-selecting first available account")
+      const firstAccountId = accounts[0].id
+      console.log("FilterContext: Auto-selecting account:", firstAccountId)
+      handleAccountsChange([firstAccountId])
+    }
+  }, [accounts, isInitialized, selectedAccounts, hasSavedSelection])
+
   // Handle date range changes
   const handleDateRangeChange = (newStartDate: string, newEndDate: string) => {
     console.log(`FilterContext: Date range changed to ${newStartDate} - ${newEndDate}`)
@@ -57,33 +143,11 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({ children }) => {
   const handleAccountsChange = async (accountIds: string[]) => {
     console.log("FilterContext: Selected account IDs:", accountIds)
     setSelectedAccounts(accountIds)
+    setHasSavedSelection(accountIds.length > 0)
 
     // Save selected accounts to persistent storage
     await AccountPersistenceService.saveSelectedAccounts(accountIds)
   }
-
-  // Load saved account selection on mount
-  useEffect(() => {
-    const loadSavedAccountSelection = async () => {
-      try {
-        const savedAccountIds = await AccountPersistenceService.loadSelectedAccounts()
-        if (savedAccountIds.length > 0 && accounts.length > 0) {
-          // Validate that saved accounts still exist
-          const validAccountIds = AccountPersistenceService.validateAccountIds(savedAccountIds, accounts)
-          if (validAccountIds.length > 0) {
-            console.log("FilterContext: Restoring saved account selection:", validAccountIds)
-            setSelectedAccounts(validAccountIds)
-          }
-        }
-      } catch (error) {
-        console.error("Error loading saved account selection:", error)
-      }
-    }
-
-    if (accounts.length > 0) {
-      loadSavedAccountSelection()
-    }
-  }, [accounts])
 
   const value: FilterContextType = {
     startDate,
@@ -96,6 +160,8 @@ export const FilterProvider: React.FC<FilterProviderProps> = ({ children }) => {
     handleAccountsChange,
     accounts,
     setAccounts,
+    isInitialized,
+    hasSavedSelection,
   }
 
   return <FilterContext.Provider value={value}>{children}</FilterContext.Provider>

@@ -1,370 +1,982 @@
 "use client"
 
 import type React from "react"
-import { useMemo } from "react"
-import { View, Text, StyleSheet, Dimensions, ScrollView } from "react-native"
-import { LineChart } from "react-native-chart-kit"
-import { useTheme } from "../context/ThemeContext"
+import { useMemo, useState, useEffect, useCallback } from "react"
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Dimensions,
+  ScrollView,
+  TouchableWithoutFeedback,
+} from "react-native"
+import { LineChart, AreaChart } from "react-native-svg-charts"
+import { Circle, G, Line, Text as SvgText } from "react-native-svg"
+import { MaterialIcons } from "@expo/vector-icons"
+import { fetchTransactions } from "../services/lean-api"
+import { leanEntityService } from "../services/lean-entity-service"
 
 interface Transaction {
   timestamp?: string
   date?: string
   amount?: string | number
+  account_id?: string
   description?: string
   [key: string]: any
 }
 
 interface TrendChartProps {
-  transactions: Transaction[]
+  selectedAccounts: string[]
+  startDate: string
+  endDate: string
   isDarkMode?: boolean
 }
 
-interface TrendDataPoint {
-  date: string
-  dateObj: Date
+interface DataPoint {
+  date: Date
   balance: number
-  dailyChange: number
-  transactionCount: number
+  amount?: number
+  isTransaction?: boolean
+  hasTransactions?: boolean
+  originalTransaction?: Transaction
+  transactionCount?: number
+  isInvisible?: boolean
 }
 
-const TrendChart: React.FC<TrendChartProps> = ({ transactions, isDarkMode = false }) => {
-  const { isDarkMode: themeIsDarkMode } = useTheme()
-  const darkMode = isDarkMode || themeIsDarkMode
-  const screenWidth = Dimensions.get("window").width
+const screenWidth = Dimensions.get("window").width
 
-  // Generate comprehensive trend data from transactions
-  const trendData = useMemo(() => {
+// Format currency for amounts - from trend-chart.tsx
+const formatCurrency = (value: number) => {
+  if (Math.abs(value) < 1) return "0"
+  if (Math.abs(value) >= 1000000) return `${(value / 1000000).toFixed(1)}M`
+  if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(0)}K`
+  return Math.round(value).toString()
+}
+
+// Debounce utility
+const debounce = (func: Function, wait: number) => {
+  let timeout: NodeJS.Timeout
+  return function executedFunction(...args: any[]) {
+    const later = () => {
+      clearTimeout(timeout)
+      func(...args)
+    }
+    clearTimeout(timeout)
+    timeout = setTimeout(later, wait)
+  }
+}
+
+// Enhanced data processor
+const trendDataProcessor = {
+  generateTrendData: (transactions: Transaction[], options: any) => {
     if (!transactions || transactions.length === 0) return []
 
-    // Sort transactions by date (oldest first for running balance calculation)
-    const sortedTransactions = [...transactions].sort((a, b) => {
-      const dateA = new Date(a.timestamp || a.date || 0).getTime()
-      const dateB = new Date(b.timestamp || b.date || 0).getTime()
-      return dateA - dateB
-    })
+    // Filter valid transactions and sort by date (oldest first)
+    const validTransactions = transactions
+      .filter((tx) => (tx.timestamp || tx.date) && tx.amount !== undefined)
+      .sort((a, b) => {
+        const dateA = new Date(a.timestamp || a.date || 0).getTime()
+        const dateB = new Date(b.timestamp || b.date || 0).getTime()
+        return dateA - dateB
+      })
 
-    // Get the date range from the transactions
-    const firstTransactionDate = new Date(sortedTransactions[0].timestamp || sortedTransactions[0].date || 0)
-    const lastTransactionDate = new Date(
-      sortedTransactions[sortedTransactions.length - 1].timestamp ||
-        sortedTransactions[sortedTransactions.length - 1].date ||
-        0,
-    )
+    if (validTransactions.length === 0) return []
 
-    // Create a complete date range (fill in missing days)
-    const dateRange: Date[] = []
-    const currentDate = new Date(firstTransactionDate)
-    currentDate.setHours(0, 0, 0, 0) // Start at beginning of day
-
-    while (currentDate <= lastTransactionDate) {
-      dateRange.push(new Date(currentDate))
-      currentDate.setDate(currentDate.getDate() + 1)
-    }
-
-    // Group transactions by date
-    const transactionsByDate = new Map<string, Transaction[]>()
-    sortedTransactions.forEach((transaction) => {
-      const date = new Date(transaction.timestamp || transaction.date || 0)
-      const dateKey = date.toISOString().split("T")[0] // YYYY-MM-DD format
-
-      if (!transactionsByDate.has(dateKey)) {
-        transactionsByDate.set(dateKey, [])
-      }
-      transactionsByDate.get(dateKey)!.push(transaction)
-    })
-
-    // Calculate running balance for each day
+    const processedData = []
     let runningBalance = 0
-    const trendPoints: TrendDataPoint[] = []
 
-    dateRange.forEach((date) => {
-      const dateKey = date.toISOString().split("T")[0]
-      const dayTransactions = transactionsByDate.get(dateKey) || []
+    // Process each transaction
+    validTransactions.forEach((tx) => {
+      const date = new Date(tx.timestamp || tx.date || 0)
+      const amount = Number.parseFloat(String(tx.amount || 0))
+      runningBalance += amount
 
-      // Calculate daily change
-      const dailyChange = dayTransactions.reduce((sum, transaction) => {
-        return sum + Number.parseFloat(String(transaction.amount || 0))
-      }, 0)
-
-      // Update running balance
-      runningBalance += dailyChange
-
-      trendPoints.push({
-        date: dateKey,
-        dateObj: new Date(date),
+      processedData.push({
+        dateObj: date,
         balance: runningBalance,
-        dailyChange,
-        transactionCount: dayTransactions.length,
+        amount: amount,
+        isTransaction: true,
+        hasTransactions: true,
+        originalTransaction: tx,
+        transactionCount: 1,
       })
     })
 
-    return trendPoints
-  }, [transactions])
+    return processedData
+  },
+}
 
-  if (!trendData || trendData.length === 0) {
+const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, endDate, isDarkMode = false }) => {
+  const [zoomLevel, setZoomLevel] = useState(0.1)
+  const [chartTransactions, setChartTransactions] = useState<Transaction[]>([])
+  const [loading, setLoading] = useState(false)
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
+
+  // Debounced zoom handler for performance
+  const debouncedZoomChange = useCallback(
+    debounce((newZoom: number) => {
+      setZoomLevel(newZoom)
+    }, 150),
+    [],
+  )
+
+  // Enhanced data fetching with Promise.all for concurrent requests
+  useEffect(() => {
+    const loadTrendData = async () => {
+      if (!selectedAccounts || selectedAccounts.length === 0) {
+        setChartTransactions([])
+        return
+      }
+
+      try {
+        setLoading(true)
+        console.log("TrendChart: Loading transaction data concurrently...")
+
+        const entityId = await leanEntityService.getEntityId()
+        if (!entityId) {
+          console.error("TrendChart: No entity ID found")
+          return
+        }
+
+        // Use Promise.all for concurrent fetching across accounts
+        const transactionPromises = selectedAccounts.map(async (accountId) => {
+          const allTransactions = []
+          const TRANSACTIONS_PER_PAGE = 100
+          const MAX_PAGES_PER_ACCOUNT = 100
+
+          console.log(`TrendChart: Fetching all transactions for account ${accountId}`)
+          let page = 1
+          let hasMore = true
+          let accountTransactions = 0
+
+          while (hasMore && page <= MAX_PAGES_PER_ACCOUNT) {
+            try {
+              const result = await fetchTransactions(
+                entityId,
+                accountId,
+                startDate,
+                endDate,
+                page,
+                TRANSACTIONS_PER_PAGE,
+              )
+
+              const pageTransactions = result.transactions || []
+              console.log(
+                `TrendChart: Page ${page}: Received ${pageTransactions.length} transactions for account ${accountId}`,
+              )
+
+              if (pageTransactions.length > 0) {
+                allTransactions.push(...pageTransactions)
+                accountTransactions += pageTransactions.length
+              }
+
+              hasMore = pageTransactions.length === TRANSACTIONS_PER_PAGE && result.hasMore !== false
+              page++
+
+              if (pageTransactions.length < TRANSACTIONS_PER_PAGE) {
+                hasMore = false
+              }
+            } catch (error) {
+              console.error(`TrendChart: Error fetching page ${page} for account ${accountId}:`, error)
+              hasMore = false
+            }
+          }
+
+          console.log(`TrendChart: Total transactions fetched for account ${accountId}: ${accountTransactions}`)
+          return allTransactions
+        })
+
+        // Execute all API calls concurrently
+        const results = await Promise.all(transactionPromises)
+        const allTransactions = results.flat()
+
+        console.log(`TrendChart: Total transactions fetched across all accounts: ${allTransactions.length}`)
+        setChartTransactions(allTransactions)
+      } catch (error) {
+        console.error("TrendChart: Error loading transaction data:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadTrendData()
+  }, [selectedAccounts, startDate, endDate])
+
+  // Enhanced data processing with both transaction-level and daily-level data
+  const chartData = useMemo(() => {
+    if (!chartTransactions || chartTransactions.length === 0) {
+      return {
+        data: [0], // Start with 0 when no data
+        dataPoints: [],
+        stats: null,
+        useTransactionLevel: false,
+        yAxisDomain: { min: -1000, max: 1000 }, // Default range including negatives
+        dateLabels: [],
+      }
+    }
+
+    const useTransactionLevel = zoomLevel >= 1.5
+
+    // Use the enhanced processor
+    const processedData = trendDataProcessor.generateTrendData(chartTransactions, {
+      maxDataPoints: 2000,
+      enableSampling: true,
+      chunkSize: 100,
+      useTransactionLevel: useTransactionLevel,
+    })
+
+    // ALWAYS start from 0 - this ensures the chart shows the rise/fall from zero
+    let adjustedProcessedData = []
+    if (processedData.length > 0) {
+      // Add a starting point at 0 with the first transaction's date
+      const firstPoint = processedData[0]
+      const startingPoint = {
+        dateObj: new Date(firstPoint.dateObj.getTime() - 1000), // 1 second before first transaction
+        balance: 0,
+        amount: 0,
+        isTransaction: false,
+        hasTransactions: false,
+        originalTransaction: null,
+        transactionCount: 0,
+      }
+      adjustedProcessedData = [startingPoint, ...processedData]
+    }
+
+    // Add invisible padding points for proper spacing and interactivity
+    const paddingPoints = Math.max(3, Math.floor(adjustedProcessedData.length * 0.05)) // 5% padding or minimum 3 points
+
+    // Add invisible points at the beginning
+    const startPaddingPoints = []
+    for (let i = paddingPoints; i > 0; i--) {
+      const firstPoint = adjustedProcessedData[0]
+      startPaddingPoints.push({
+        dateObj: new Date(firstPoint.dateObj.getTime() - i * 24 * 60 * 60 * 1000), // i days before
+        balance: 0, // Keep at 0 for invisible start
+        amount: 0,
+        isTransaction: false,
+        hasTransactions: false,
+        originalTransaction: null,
+        transactionCount: 0,
+        isInvisible: true, // Mark as invisible
+      })
+    }
+
+    // Add invisible points at the end
+    const endPaddingPoints = []
+    const lastPoint = adjustedProcessedData[adjustedProcessedData.length - 1]
+    for (let i = 1; i <= paddingPoints; i++) {
+      endPaddingPoints.push({
+        dateObj: new Date(lastPoint.dateObj.getTime() + i * 24 * 60 * 60 * 1000), // i days after
+        balance: lastPoint.balance, // Keep same balance for invisible end
+        amount: 0,
+        isTransaction: false,
+        hasTransactions: false,
+        originalTransaction: null,
+        transactionCount: 0,
+        isInvisible: true, // Mark as invisible
+      })
+    }
+
+    // Combine all data with padding
+    adjustedProcessedData = [...startPaddingPoints, ...adjustedProcessedData, ...endPaddingPoints]
+
+    // Convert to chart format with dataPoints for the improved structure
+    const dataPoints = adjustedProcessedData.map((point, index) => {
+      // Create date string for display
+      let dateStr
+      if (point.dateObj) {
+        const date = point.dateObj
+        dateStr = `${date.getMonth() + 1}/${date.getDate()}`
+      } else {
+        // Fallback: estimate date based on index
+        const startDateObj = new Date(startDate)
+        const endDateObj = new Date(endDate)
+        const daysDiff = Math.ceil((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24))
+        const dayOffset = Math.floor((index / adjustedProcessedData.length) * daysDiff)
+        const date = new Date(startDateObj)
+        date.setDate(date.getDate() + dayOffset)
+        dateStr = `${date.getMonth() + 1}/${date.getDate()}`
+      }
+
+      return {
+        index,
+        balance: point.balance,
+        amount: point.amount || 0,
+        hasTransactions: point.hasTransactions || false,
+        transactionCount: point.transactionCount || 0,
+        isTransaction: point.isTransaction || false,
+        originalTransaction: point.originalTransaction,
+        date: dateStr,
+        dateObj: point.dateObj,
+        isInvisible: point.isInvisible || false,
+      }
+    })
+
+    // Calculate statistics
+    const balances = dataPoints.map((d) => d.balance)
+    const minBalance = Math.min(...balances, 0) // Always include 0
+    const maxBalance = Math.max(...balances, 0) // Always include 0
+
+    // Create Y-axis domain that always includes 0 and shows negatives when needed
+    const range = Math.max(Math.abs(minBalance), Math.abs(maxBalance))
+    const padding = range * 0.1 // 10% padding
+
+    const yAxisDomain = {
+      min: minBalance < 0 ? minBalance - padding : -padding,
+      max: maxBalance > 0 ? maxBalance + padding : padding,
+    }
+
+    // Create smart date labels for X-axis with guaranteed first/last transaction dates
+    const dateLabels = dataPoints.map((point, index) => {
+      const totalPoints = dataPoints.length
+      const labelInterval = Math.max(1, Math.floor(totalPoints / 6)) // Show ~6 labels max
+
+      // Find first and last actual transaction indices (skip invisible padding)
+      const firstTransactionIndex = dataPoints.findIndex((p) => !p.isInvisible && p.hasTransactions)
+      const lastTransactionIndex =
+        dataPoints
+          .map((p, i) => (!p.isInvisible && p.hasTransactions ? i : -1))
+          .filter((i) => i !== -1)
+          .pop() || totalPoints - 1
+
+      // Always show first transaction, last transaction, and interval-based labels
+      if (index === firstTransactionIndex || index === lastTransactionIndex || index % labelInterval === 0) {
+        return point.date
+      }
+      return ""
+    })
+
+    const stats = {
+      startBalance: balances[0] || 0,
+      endBalance: balances[balances.length - 1] || 0,
+      minBalance,
+      maxBalance,
+      change: (balances[balances.length - 1] || 0) - (balances[0] || 0),
+      days: adjustedProcessedData.length,
+      totalTransactions: chartTransactions.length,
+      firstTransactionAmount: processedData.length > 0 ? processedData[0].amount : 0,
+    }
+
+    return {
+      data: balances,
+      dataPoints,
+      stats,
+      useTransactionLevel,
+      yAxisDomain,
+      dateLabels,
+    }
+  }, [chartTransactions, zoomLevel, startDate, endDate])
+
+  // ENHANCED: Smart Y-axis scale with constant gaps and round numbers (from trend-chart.tsx)
+  const yAxisData = useMemo(() => {
+    if (chartData.data.length === 0) return [0]
+
+    const { yAxisDomain } = chartData
+    const minValue = yAxisDomain.min
+    const maxValue = yAxisDomain.max
+
+    // Use the same increment calculation but ensure perfect alignment
+    const getScaleIncrement = (max: number, min: number) => {
+      const range = Math.max(Math.abs(max), Math.abs(min))
+
+      if (range <= 10000) return 1000
+      if (range <= 50000) return 5000
+      if (range <= 100000) return 10000
+      if (range <= 250000) return 25000
+      if (range <= 500000) return 50000
+      if (range <= 1000000) return 100000
+      if (range <= 2500000) return 250000
+      return 500000
+    }
+
+    const increment = getScaleIncrement(maxValue, minValue)
+
+    // Calculate exact grid positions
+    const maxLines = Math.ceil(Math.abs(maxValue) / increment)
+    const minLines = Math.ceil(Math.abs(minValue) / increment)
+
+    const values = []
+
+    // Add negative values if needed
+    if (minValue < 0) {
+      for (let i = minLines; i >= 1; i--) {
+        values.push(-i * increment)
+      }
+    }
+
+    // Always add 0
+    values.push(0)
+
+    // Add positive values
+    for (let i = 1; i <= Math.max(maxLines, minValue >= 0 ? 8 : 6); i++) {
+      values.push(i * increment)
+    }
+
+    // Ensure we have 8-10 total lines
+    while (values.length < 8) {
+      const lastValue = values[values.length - 1]
+      values.push(lastValue + increment)
+    }
+
+    if (values.length > 10) {
+      values.splice(10)
+    }
+
+    return values.reverse()
+  }, [chartData])
+
+  // FIXED: Dot behavior configuration - "Each dot = day" starts from 1.1x
+  const dotBehavior = useMemo(() => {
+    const showDots = zoomLevel >= 1.1 // Changed from > 0.3 to >= 1.1
+    const isTransactionLevel = zoomLevel >= 1.5
+
+    let indicatorText = ""
+    let indicatorIcon = "radio-button-unchecked"
+
+    if (!showDots) {
+      indicatorText = "No dots shown - Overview mode"
+      indicatorIcon = "remove"
+    } else if (isTransactionLevel) {
+      indicatorText = "Each dot = Transaction"
+      indicatorIcon = "fiber-manual-record"
+    } else {
+      indicatorText = "Each dot = Day"
+      indicatorIcon = "today"
+    }
+
+    return {
+      showDots,
+      isTransactionLevel,
+      indicatorText,
+      indicatorIcon,
+      dotRadius: isTransactionLevel ? "2" : "3",
+    }
+  }, [zoomLevel])
+
+  // Zoom controls
+  const handleZoomIn = () => {
+    const newZoom = Math.min(zoomLevel * 1.5, 2)
+    debouncedZoomChange(newZoom)
+  }
+
+  const handleZoomOut = () => {
+    const newZoom = Math.max(zoomLevel / 1.5, 0.05)
+    debouncedZoomChange(newZoom)
+  }
+
+  const handleFitToScreen = () => {
+    debouncedZoomChange(0.1)
+  }
+
+  // FIXED: Grid Lines component with PERFECT alignment to amount labels
+  const GridLines = ({ x, y }: any) => {
+    const gridLines = []
+
+    yAxisData.forEach((value, index) => {
+      // Use EXACT same positioning as the fixed amount labels
+      const linePosition = 20 + index * (240 / (yAxisData.length - 1))
+
+      const isZeroLine = Math.abs(value) < 0.1
+      const chartWidth = chartData.data.length > 0 ? x(chartData.data.length - 1) : 100
+
+      if (isZeroLine) {
+        // Black solid line for zero - made thinner
+        gridLines.push(
+          <Line
+            key={`zero-${index}`}
+            x1={0}
+            y1={linePosition}
+            x2={chartWidth}
+            y2={linePosition}
+            stroke={isDarkMode ? "#ffffff" : "#000000"}
+            strokeWidth={1.5}
+            opacity={1}
+          />,
+        )
+      } else {
+        // Green dashed lines for others
+        gridLines.push(
+          <Line
+            key={`grid-${index}`}
+            x1={0}
+            y1={linePosition}
+            x2={chartWidth}
+            y2={linePosition}
+            stroke={isDarkMode ? "#4CAF50" : "#27ae60"}
+            strokeWidth={1}
+            strokeDasharray="5,5"
+            opacity={0.6}
+          />,
+        )
+      }
+    })
+
+    return <G>{gridLines}</G>
+  }
+
+  // Date Labels component for X-axis
+  const DateLabels = ({ x, y }: any) => {
+    const labels = []
+    // Calculate zero line position (same logic as GridLines)
+  const zeroIndex = yAxisData.findIndex((value) => Math.abs(value) < 0.1)
+  const zeroLinePosition = zeroIndex >= 0 ? 20 + zeroIndex * (240 / (yAxisData.length - 1)) : 130
+  const yPosition = zeroLinePosition + 15 // Position dates 15px below zero line
+
+    chartData.dateLabels.forEach((label, index) => {
+      const dataPoint = chartData.dataPoints[index]
+      // Only show labels for non-invisible points
+      if (label && dataPoint && !dataPoint.isInvisible) {
+        labels.push(
+          <SvgText
+            key={index}
+            x={x(index)}
+            y={yPosition}
+            fontSize="10"
+            fill={isDarkMode ? "#AAA" : "#666"}
+            textAnchor="middle"
+            fontWeight="400"
+          >
+            {label}
+          </SvgText>,
+        )
+      }
+    })
+
+    return <G>{labels}</G>
+  }
+
+  // Enhanced Tooltip component with improved positioning and boundary checking
+  const Tooltip = ({ x, y }: any) => {
+    if (selectedIndex == null || !chartData.dataPoints[selectedIndex]) return null
+
+    const value = chartData.dataPoints[selectedIndex]
+
+    // Skip invisible points for tooltip
+    if (value.isInvisible) return null
+
+    const xPos = x(selectedIndex)
+    const yPos = y(value.balance)
+
+    // Better boundary checking with zoom-aware positioning
+    const tooltipWidth = 80
+    const leftMargin = 20
+
+    let tooltipOffset = 10
+
+    // Only apply aggressive left positioning for low zoom levels (fit to 0.3x)
+    if (zoomLevel <= 0.3) {
+      // For low zoom, move slightly left when near right edge
+      if (xPos + tooltipWidth + 40 > chartWidth) {
+        tooltipOffset = -30 // Only move slightly left, not all the way
+      }
+    } else {
+      // For higher zoom levels, use normal positioning
+      if (xPos + tooltipWidth + 20 > chartWidth) {
+        tooltipOffset = -tooltipWidth - 10
+      }
+    }
+
+    // Ensure tooltip doesn't go off left edge
+    if (xPos + tooltipOffset < leftMargin) {
+      tooltipOffset = leftMargin - xPos
+    }
+
     return (
-      <View style={[styles.emptyContainer, darkMode && { backgroundColor: "#2A2A2A" }]}>
-        <Text style={[styles.emptyText, darkMode && { color: "#AAA" }]}>No trend data available</Text>
+      <G>
+        {/* Vertical line indicator */}
+        <Line x1={xPos} y1={0} x2={xPos} y2={240} stroke="#aaa" strokeDasharray="4,4" strokeWidth={1} />
+
+        {/* Tooltip circle */}
+        <Circle
+          cx={xPos}
+          cy={yPos}
+          r={5}
+          fill="white"
+          stroke={chartData.stats && chartData.stats.endBalance >= 0 ? "#27ae60" : "#e74c3c"}
+          strokeWidth={3}
+        />
+
+        {/* Tooltip background and text */}
+        <G x={xPos + tooltipOffset} y={Math.max(yPos - 50, 20)}>
+          {/* Background */}
+          <Circle
+            cx={0}
+            cy={0}
+            r={35}
+            fill={isDarkMode ? "rgba(0,0,0,0.9)" : "rgba(255,255,255,0.95)"}
+            stroke={isDarkMode ? "#555" : "#ddd"}
+            strokeWidth={1}
+          />
+
+          {/* Date */}
+          <SvgText x={0} y={-8} fontSize="10" fill={isDarkMode ? "#FFF" : "#333"} textAnchor="middle" fontWeight="600">
+            {value.date}
+          </SvgText>
+
+          {/* Balance */}
+          <SvgText
+            x={0}
+            y={6}
+            fontSize="9"
+            fill={value.balance >= 0 ? "#27ae60" : "#e74c3c"}
+            textAnchor="middle"
+            fontWeight="500"
+          >
+            {formatCurrency(value.balance)} AED
+          </SvgText>
+
+          {/* Amount change if available */}
+          {value.amount !== 0 && (
+            <SvgText x={0} y={18} fontSize="8" fill={isDarkMode ? "#CCC" : "#666"} textAnchor="middle">
+              {value.amount > 0 ? "+" : ""}
+              {formatCurrency(value.amount)}
+            </SvgText>
+          )}
+        </G>
+      </G>
+    )
+  }
+
+  // Custom decorators for dots
+  const Decorator = ({ x, y, data }: any) => {
+    if (!dotBehavior.showDots) return null
+
+    return data.map((value: number, index: number) => {
+      const dataPoint = chartData.dataPoints[index]
+      if (!dataPoint || dataPoint.isInvisible) return null // Skip invisible points
+
+      const hasTransactions = dataPoint.hasTransactions
+      const isTransaction = dataPoint.isTransaction
+
+      return (
+        <Circle
+          key={index}
+          cx={x(index)}
+          cy={y(value)}
+          r={dotBehavior.dotRadius}
+          stroke={isDarkMode ? "#fff" : "#333"}
+          strokeWidth="1"
+          fill={hasTransactions ? (isTransaction ? "#27ae60" : "#27ae60") : "#6b7280"}
+        />
+      )
+    })
+  }
+
+  if (loading) {
+    return (
+      <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>Loading trend data...</Text>
       </View>
     )
   }
 
-  // Calculate chart dimensions and data
-  const balanceData = trendData.map((item) => item.balance)
-  const minBalance = Math.min(...balanceData)
-  const maxBalance = Math.max(...balanceData)
+  if (chartData.data.length === 0) {
+    return (
+      <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>No transaction data available</Text>
+      </View>
+    )
+  }
 
-  // Create a baseline at zero or adjust range to include zero
-  const hasNegativeBalance = minBalance < 0
-  const hasPositiveBalance = maxBalance > 0
+  const { stats, dataPoints, yAxisDomain } = chartData
+  const contentInset = { top: 20, bottom: 20 } // Increased bottom for date labels
+  const chartHeight = 280 // Increased height for date labels
 
-  // Adjust the range to always include zero as a reference line
-  let adjustedMin = minBalance
-  let adjustedMax = maxBalance
+  // Calculate chart width with better padding
+  const amountColumnWidth = 55
+  const availableWidth = screenWidth - amountColumnWidth - 60 // Increased left margin
+  const labelWidth = 30 // Increased for better spacing
+  const rightPadding = 10 // Increased padding for tooltip space
 
-  if (hasNegativeBalance && hasPositiveBalance) {
-    // Both positive and negative - keep natural range but ensure zero is visible
-    const range = maxBalance - minBalance
-    const padding = range * 0.1 // 10% padding
-    adjustedMin = Math.min(minBalance - padding, -Math.abs(maxBalance) * 0.1)
-    adjustedMax = Math.max(maxBalance + padding, Math.abs(minBalance) * 0.1)
-  } else if (hasNegativeBalance) {
-    // Only negative balances - extend to show zero line
-    adjustedMax = Math.max(0, maxBalance * 1.1)
-    adjustedMin = minBalance * 1.1
+  let chartWidth
+  if (zoomLevel <= 0.1) {
+    chartWidth = availableWidth - 20
   } else {
-    // Only positive balances - extend to show zero line
-    adjustedMin = Math.min(0, minBalance * 0.9)
-    adjustedMax = maxBalance * 1.1
+    chartWidth = Math.max(availableWidth, chartData.data.length * (2.5 * zoomLevel)) + labelWidth
   }
 
-  // Generate labels - show dates at regular intervals
-  const labels = trendData.map((item, index) => {
-    const totalPoints = trendData.length
-    let labelInterval = 1
-
-    // Adjust label interval based on data length
-    if (totalPoints > 30) labelInterval = Math.floor(totalPoints / 8)
-    else if (totalPoints > 14) labelInterval = Math.floor(totalPoints / 6)
-    else if (totalPoints > 7) labelInterval = Math.floor(totalPoints / 4)
-
-    if (index % labelInterval === 0 || index === totalPoints - 1) {
-      const date = new Date(item.date)
-      return `${date.getMonth() + 1}/${date.getDate()}`
-    }
-    return ""
-  })
-
-  // Chart configuration
-  const chartConfig = {
-    backgroundGradientFrom: darkMode ? "#1E1E1E" : "#fff",
-    backgroundGradientTo: darkMode ? "#1E1E1E" : "#fff",
-    decimalPlaces: 0,
-    color: (opacity = 1) => {
-      // Color based on current balance and trend
-      const currentBalance = balanceData[balanceData.length - 1]
-      const startBalance = balanceData[0]
-      const isPositiveTrend = currentBalance >= startBalance
-
-      if (currentBalance < 0) {
-        return `rgba(231, 76, 60, ${opacity})` // Red for negative balance
-      } else if (isPositiveTrend) {
-        return `rgba(39, 174, 96, ${opacity})` // Green for positive trend
-      } else {
-        return `rgba(255, 193, 7, ${opacity})` // Yellow/orange for declining but positive
-      }
-    },
-    labelColor: (opacity = 1) => (darkMode ? `rgba(255, 255, 255, ${opacity})` : `rgba(0, 0, 0, ${opacity})`),
-    style: {
-      borderRadius: 16,
-    },
-    propsForDots: {
-      r: "3",
-      strokeWidth: "2",
-      stroke: darkMode ? "#fff" : "#333",
-    },
-    propsForLabels: {
-      fontSize: 10,
-    },
-    fillShadowGradient: darkMode ? "#333" : "#f0f0f0",
-    fillShadowGradientOpacity: 0.3,
-  }
-
-  // Format Y-axis labels
-  const formatYLabel = (value: string) => {
-    const num = Number.parseFloat(value)
-    if (Math.abs(num) >= 1000000) return `${(num / 1000000).toFixed(1)}M`
-    if (Math.abs(num) >= 1000) return `${(num / 1000).toFixed(0)}K`
-    return num.toFixed(0)
-  }
-
-  // Calculate chart width for horizontal scrolling
-  const minChartWidth = screenWidth - 64
-  const optimalPointWidth = 25 // Optimal spacing between points
-  const calculatedWidth = Math.max(minChartWidth, trendData.length * optimalPointWidth)
-
-  // Get trend statistics
-  const totalChange = maxBalance - minBalance
-  const startBalance = balanceData[0]
-  const endBalance = balanceData[balanceData.length - 1]
-  const netChange = endBalance - startBalance
-  const totalTransactions = trendData.reduce((sum, point) => sum + point.transactionCount, 0)
-
-  // Find significant points (highest and lowest)
-  const highestPoint = trendData.find((point) => point.balance === maxBalance)
-  const lowestPoint = trendData.find((point) => point.balance === minBalance)
+  // Use exact Y-axis domain from yAxisData for perfect alignment
+  const exactYMin = yAxisData[yAxisData.length - 1] // Bottom value
+  const exactYMax = yAxisData[0] // Top value
 
   return (
     <View style={styles.container}>
-      {/* Trend Statistics */}
-      <View style={styles.statsContainer}>
-        <View style={styles.statRow}>
+      {/* Stats */}
+      {stats && (
+        <View style={styles.statsRow}>
           <View style={styles.statItem}>
-            <Text style={[styles.statLabel, darkMode && { color: "#AAA" }]}>Period</Text>
-            <Text style={[styles.statValue, darkMode && { color: "#FFF" }]}>{trendData.length} days</Text>
+            <Text style={[styles.statLabel, isDarkMode && { color: "#AAA" }]}>Period</Text>
+            <Text style={[styles.statValue, isDarkMode && { color: "#FFF" }]}>
+              {chartData.useTransactionLevel ? `${stats.totalTransactions} txns` : `${stats.days} days`}
+            </Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={[styles.statLabel, darkMode && { color: "#AAA" }]}>Transactions</Text>
-            <Text style={[styles.statValue, darkMode && { color: "#FFF" }]}>{totalTransactions}</Text>
+            <Text style={[styles.statLabel, isDarkMode && { color: "#AAA" }]}>Transactions</Text>
+            <Text style={[styles.statValue, isDarkMode && { color: "#FFF" }]}>{stats.totalTransactions}</Text>
           </View>
           <View style={styles.statItem}>
-            <Text style={[styles.statLabel, darkMode && { color: "#AAA" }]}>Net Change</Text>
-            <Text
-              style={[
-                styles.statValue,
-                { color: netChange >= 0 ? "#27ae60" : "#e74c3c" },
-                darkMode && { fontWeight: "600" },
-              ]}
-            >
-              {netChange >= 0 ? "+" : ""}
-              {formatYLabel(netChange.toString())} AED
+            <Text style={[styles.statLabel, isDarkMode && { color: "#AAA" }]}>Net Change</Text>
+            <Text style={[styles.statValue, { color: stats.change >= 0 ? "#27ae60" : "#e74c3c" }]}>
+              {stats.change >= 0 ? "+" : ""}
+              {formatCurrency(stats.change)} AED
             </Text>
           </View>
         </View>
+      )}
+
+      {/* Zoom Controls */}
+      <View style={[styles.zoomContainer, isDarkMode && { backgroundColor: "#333" }]}>
+        <TouchableOpacity
+          style={[styles.zoomButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+          onPress={handleZoomOut}
+        >
+          <MaterialIcons name="zoom-out" size={18} color={isDarkMode ? "#FFF" : "#333"} />
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.fitButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+          onPress={handleFitToScreen}
+        >
+          <MaterialIcons name="fit-screen" size={16} color={isDarkMode ? "#FFF" : "#333"} />
+          <Text style={[styles.fitButtonText, isDarkMode && { color: "#FFF" }]}>Fit</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.zoomLevelButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+          <Text style={[styles.zoomLevelText, isDarkMode && { color: "#FFF" }]}>
+            {zoomLevel <= 0.1 ? "Fit" : `${zoomLevel.toFixed(1)}x`}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.zoomButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+          onPress={handleZoomIn}
+        >
+          <MaterialIcons name="zoom-in" size={18} color={isDarkMode ? "#FFF" : "#333"} />
+        </TouchableOpacity>
       </View>
 
-      {/* Chart with horizontal scroll */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={true}
-        style={styles.chartScrollContainer}
-        contentContainerStyle={styles.chartScrollContent}
-      >
-        <LineChart
-          data={{
-            labels,
-            datasets: [
-              {
-                data: balanceData,
-                color: (opacity = 1) => {
-                  const currentBalance = balanceData[balanceData.length - 1]
-                  const startBalance = balanceData[0]
-                  const isPositiveTrend = currentBalance >= startBalance
-
-                  if (currentBalance < 0) {
-                    return `rgba(231, 76, 60, ${opacity})`
-                  } else if (isPositiveTrend) {
-                    return `rgba(39, 174, 96, ${opacity})`
-                  } else {
-                    return `rgba(255, 193, 7, ${opacity})`
-                  }
-                },
-                strokeWidth: 3,
-              },
-            ],
-          }}
-          width={calculatedWidth}
-          height={250}
-          chartConfig={chartConfig}
-          bezier={false}
-          style={styles.chart}
-          formatYLabel={formatYLabel}
-          withInnerLines={true}
-          withOuterLines={true}
-          withVerticalLines={false}
-          withHorizontalLines={true}
-          segments={6}
-          withDots={trendData.length <= 50}
-          withShadow={true}
-          fromZero={false} // Allow negative values
+      {/* Dot Behavior Indicator */}
+      <View style={[styles.dotIndicatorContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <MaterialIcons
+          name={dotBehavior.indicatorIcon}
+          size={16}
+          color={dotBehavior.showDots ? (isDarkMode ? "#4CAF50" : "#27ae60") : isDarkMode ? "#666" : "#999"}
         />
-      </ScrollView>
-
-      {/* Balance Range and Key Points */}
-      <View style={styles.balanceInfo}>
-        <View style={styles.balanceRow}>
-          <View style={styles.balanceItem}>
-            <Text style={[styles.balanceLabel, darkMode && { color: "#AAA" }]}>Start Balance</Text>
-            <Text
-              style={[
-                styles.balanceValue,
-                { color: startBalance >= 0 ? "#27ae60" : "#e74c3c" },
-                darkMode && { fontWeight: "600" },
-              ]}
-            >
-              {formatYLabel(startBalance.toString())} AED
-            </Text>
-          </View>
-          <View style={styles.balanceItem}>
-            <Text style={[styles.balanceLabel, darkMode && { color: "#AAA" }]}>End Balance</Text>
-            <Text
-              style={[
-                styles.balanceValue,
-                { color: endBalance >= 0 ? "#27ae60" : "#e74c3c" },
-                darkMode && { fontWeight: "600" },
-              ]}
-            >
-              {formatYLabel(endBalance.toString())} AED
-            </Text>
-          </View>
-        </View>
-
-        {highestPoint && lowestPoint && (
-          <View style={styles.balanceRow}>
-            <View style={styles.balanceItem}>
-              <Text style={[styles.balanceLabel, darkMode && { color: "#AAA" }]}>Highest</Text>
-              <Text style={[styles.balanceValue, { color: "#27ae60" }, darkMode && { fontWeight: "600" }]}>
-                {formatYLabel(highestPoint.balance.toString())} AED
-              </Text>
-              <Text style={[styles.balanceDate, darkMode && { color: "#888" }]}>
-                {new Date(highestPoint.date).toLocaleDateString()}
-              </Text>
-            </View>
-            <View style={styles.balanceItem}>
-              <Text style={[styles.balanceLabel, darkMode && { color: "#AAA" }]}>Lowest</Text>
-              <Text style={[styles.balanceValue, { color: "#e74c3c" }, darkMode && { fontWeight: "600" }]}>
-                {formatYLabel(lowestPoint.balance.toString())} AED
-              </Text>
-              <Text style={[styles.balanceDate, darkMode && { color: "#888" }]}>
-                {new Date(lowestPoint.date).toLocaleDateString()}
-              </Text>
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* Instructions */}
-      <View style={styles.instructions}>
-        <Text style={[styles.instructionText, darkMode && { color: "#888" }]}>
-          Scroll horizontally to view the complete trend • Zero line represents balance baseline
+        <Text
+          style={[
+            styles.dotIndicatorText,
+            isDarkMode && { color: "#FFF" },
+            !dotBehavior.showDots && { color: isDarkMode ? "#666" : "#999" },
+          ]}
+        >
+          {dotBehavior.indicatorText}
         </Text>
       </View>
+
+      {/* ENHANCED: Chart Container with Fixed Amount Labels */}
+      <View style={styles.chartContainer}>
+        {/* Fixed Amount Labels - Outside Scroll Area */}
+        <View style={[styles.fixedAmountColumn, isDarkMode && { backgroundColor: "#1E1E1E" }]}>
+          {yAxisData.map((value, index) => {
+            const isZeroLine = Math.abs(value) < 0.1
+            const linePosition = 20 + index * (240 / (yAxisData.length - 1))
+
+            return (
+              <View
+                key={index}
+                style={[
+                  styles.fixedAmountLabel,
+                  { top: linePosition - 10 },
+                  isDarkMode && { backgroundColor: "#1E1E1E" },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.amountLabel,
+                    isDarkMode && { color: "#FFF" },
+                    isZeroLine && {
+                      fontWeight: "bold",
+                      fontSize: 11,
+                      color: isDarkMode ? "#FFF" : "#000",
+                      backgroundColor: isDarkMode ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.05)",
+                      paddingHorizontal: 4,
+                      paddingVertical: 1,
+                      borderRadius: 3,
+                    },
+                  ]}
+                >
+                  {formatCurrency(value)}
+                </Text>
+              </View>
+            )
+          })}
+        </View>
+
+        {/* Vertical Separator */}
+        <View style={[styles.verticalSeparator, isDarkMode && { backgroundColor: "#333" }]} />
+
+        {/* Scrollable Chart Area */}
+        <View style={styles.scrollableChartArea}>
+          <ScrollView
+            horizontal
+            style={{ flex: 1 }}
+            contentContainerStyle={{ paddingLeft: 5, paddingRight: rightPadding }} // Added left padding
+            showsHorizontalScrollIndicator={true}
+            onScroll={() => {
+              setSelectedIndex(null)
+            }}
+            scrollEventThrottle={16}
+          >
+            <TouchableWithoutFeedback
+              onPress={(event) => {
+                const tapX = event.nativeEvent.locationX
+                const index = Math.round((tapX / chartWidth) * (chartData.data.length - 1))
+                if (index >= 0 && index < chartData.data.length) {
+                  setSelectedIndex(index)
+                }
+              }}
+            >
+              <View style={{ width: chartWidth + rightPadding }}>
+                {/* Area Chart for fill */}
+                <AreaChart
+                  style={{ height: chartHeight, width: chartWidth, position: "absolute", zIndex: 2 }}
+                  data={chartData.data}
+                  contentInset={contentInset}
+                  yMin={exactYMin}
+                  yMax={exactYMax}
+                  svg={{
+                    fill: stats && stats.endBalance >= 0 ? "rgba(39, 174, 96, 0.2)" : "rgba(231, 76, 60, 0.2)",
+                  }}
+                />
+
+                {/* Line Chart with perfectly aligned grid lines */}
+                <LineChart
+                  style={{ height: chartHeight, width: chartWidth, zIndex: 3 }}
+                  data={chartData.data}
+                  contentInset={contentInset}
+                  yMin={exactYMin}
+                  yMax={exactYMax}
+                  svg={{
+                    stroke: stats && stats.endBalance >= 0 ? "#27ae60" : "#e74c3c",
+                    strokeWidth: 3,
+                  }}
+                >
+                  <GridLines />
+                  <DateLabels />
+                  <Decorator />
+                  <Tooltip />
+                </LineChart>
+              </View>
+            </TouchableWithoutFeedback>
+          </ScrollView>
+        </View>
+      </View>
+
+      {/* Balance Info Section */}
+      {stats && (
+        <View style={[styles.balanceInfoContainer, isDarkMode && { backgroundColor: "#1E1E1E" }]}>
+          <View style={styles.balanceInfoGrid}>
+            <View style={styles.balanceInfoRow}>
+              <View style={styles.balanceInfoItem}>
+                <Text style={[styles.balanceInfoLabel, isDarkMode && { color: "#AAA" }]}>First Transaction</Text>
+                <Text
+                  style={[
+                    styles.balanceInfoValue,
+                    { color: stats.firstTransactionAmount >= 0 ? "#27ae60" : "#e74c3c" },
+                    isDarkMode && { fontWeight: "600" },
+                  ]}
+                >
+                  {stats.firstTransactionAmount >= 0 ? "+" : ""}
+                  {formatCurrency(stats.firstTransactionAmount)} AED
+                </Text>
+              </View>
+
+              <View style={styles.balanceInfoItem}>
+                <Text style={[styles.balanceInfoLabel, isDarkMode && { color: "#AAA" }]}>End Balance</Text>
+                <Text
+                  style={[
+                    styles.balanceInfoValue,
+                    { color: stats.endBalance >= 0 ? "#27ae60" : "#e74c3c" },
+                    isDarkMode && { fontWeight: "600" },
+                  ]}
+                >
+                  {formatCurrency(stats.endBalance)} AED
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.balanceInfoRow}>
+              <View style={styles.balanceInfoItem}>
+                <Text style={[styles.balanceInfoLabel, isDarkMode && { color: "#AAA" }]}>Highest Balance</Text>
+                <Text
+                  style={[
+                    styles.balanceInfoValue,
+                    { color: stats.maxBalance >= 0 ? "#27ae60" : "#e74c3c" },
+                    isDarkMode && { fontWeight: "600" },
+                  ]}
+                >
+                  {formatCurrency(stats.maxBalance)} AED
+                </Text>
+              </View>
+
+              <View style={styles.balanceInfoItem}>
+                <Text style={[styles.balanceInfoLabel, isDarkMode && { color: "#AAA" }]}>Lowest Balance</Text>
+                <Text
+                  style={[
+                    styles.balanceInfoValue,
+                    { color: stats.minBalance >= 0 ? "#27ae60" : "#e74c3c" },
+                    isDarkMode && { fontWeight: "600" },
+                  ]}
+                >
+                  {formatCurrency(stats.minBalance)} AED
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          <View style={[styles.trendIndicator, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+            <MaterialIcons
+              name={stats.change >= 0 ? "trending-up" : "trending-down"}
+              size={20}
+              color={stats.change >= 0 ? "#27ae60" : "#e74c3c"}
+            />
+            <Text
+              style={[
+                styles.trendText,
+                { color: stats.change >= 0 ? "#27ae60" : "#e74c3c" },
+                isDarkMode && { fontWeight: "600" },
+              ]}
+            >
+              {stats.change >= 0 ? "Positive" : "Negative"} trend over{" "}
+              {chartData.useTransactionLevel ? `${stats.totalTransactions} transactions` : `${stats.days} days`}
+            </Text>
+          </View>
+        </View>
+      )}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   container: {
-    alignItems: "center",
-    marginVertical: 8,
-  },
-  statsContainer: {
     width: "100%",
-    marginBottom: 16,
   },
-  statRow: {
+  emptyContainer: {
+    height: 440,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f5f5f5",
+    borderRadius: 8,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: "#666",
+  },
+  statsRow: {
     flexDirection: "row",
     justifyContent: "space-around",
+    marginBottom: 16,
     paddingHorizontal: 8,
   },
   statItem: {
@@ -372,75 +984,185 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   statLabel: {
-    fontSize: 12,
-    color: "#666",
-    marginBottom: 4,
-  },
-  statValue: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#333",
-  },
-  chartScrollContainer: {
-    width: "100%",
-    marginBottom: 16,
-  },
-  chartScrollContent: {
-    paddingHorizontal: 8,
-  },
-  chart: {
-    borderRadius: 16,
-    paddingRight: 0,
-  },
-  balanceInfo: {
-    width: "100%",
-    paddingHorizontal: 16,
-    marginBottom: 12,
-  },
-  balanceRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 12,
-  },
-  balanceItem: {
-    alignItems: "center",
-    flex: 1,
-  },
-  balanceLabel: {
     fontSize: 11,
     color: "#666",
     marginBottom: 2,
   },
-  balanceValue: {
-    fontSize: 13,
+  statValue: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#333",
+    textAlign: "center",
+  },
+  zoomContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+    backgroundColor: "#f0f0f0",
+    borderRadius: 20,
+    padding: 4,
+    alignSelf: "center",
+  },
+  zoomButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#fff",
+    justifyContent: "center",
+    alignItems: "center",
+    marginHorizontal: 2,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1,
+    elevation: 2,
+  },
+  fitButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    marginHorizontal: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1,
+    elevation: 2,
+  },
+  fitButtonText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#333",
+    marginLeft: 3,
+  },
+  zoomLevelButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: "#fff",
+    marginHorizontal: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 1,
+    elevation: 2,
+  },
+  zoomLevelText: {
+    fontSize: 11,
     fontWeight: "600",
     color: "#333",
   },
-  balanceDate: {
-    fontSize: 10,
-    color: "#888",
-    marginTop: 2,
-  },
-  instructions: {
-    paddingHorizontal: 16,
-  },
-  instructionText: {
-    fontSize: 10,
-    color: "#888",
-    textAlign: "center",
-    fontStyle: "italic",
-  },
-  emptyContainer: {
-    height: 250,
-    justifyContent: "center",
+  dotIndicatorContainer: {
+    flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#f5f5f5",
-    borderRadius: 16,
-    marginVertical: 8,
+    justifyContent: "center",
+    backgroundColor: "#f8f9fa",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginBottom: 16,
+    alignSelf: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  emptyText: {
-    fontSize: 16,
+  dotIndicatorText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#333",
+    marginLeft: 6,
+  },
+  chartContainer: {
+    flexDirection: "row",
+    height: 320, // Increased for date labels
+    marginBottom: 20,
+  },
+  fixedAmountColumn: {
+    width: 55,
+    height: 320, // Increased for date labels
+    position: "relative",
+    backgroundColor: "#ffffff",
+    zIndex: 3,
+  },
+  fixedAmountLabel: {
+    position: "absolute",
+    right: 5,
+    width: 50,
+    height: 20,
+    justifyContent: "center",
+    alignItems: "flex-end",
+    backgroundColor: "#ffffff",
+    zIndex: 4,
+  },
+  amountLabel: {
+    fontSize: 10,
+    color: "#333",
+    fontWeight: "500",
+  },
+  verticalSeparator: {
+    width: 1,
+    height: 320, // Increased for date labels
+    backgroundColor: "#e0e0e0",
+    zIndex: 2,
+  },
+  scrollableChartArea: {
+    flex: 1,
+    position: "relative",
+  },
+  balanceInfoContainer: {
+    backgroundColor: "#ffffff",
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  balanceInfoGrid: {
+    marginBottom: 16,
+  },
+  balanceInfoRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  balanceInfoItem: {
+    alignItems: "center",
+    flex: 1,
+  },
+  balanceInfoLabel: {
+    fontSize: 11,
     color: "#666",
+    marginBottom: 4,
+    textAlign: "center",
+  },
+  balanceInfoValue: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#333",
+    textAlign: "center",
+  },
+  trendIndicator: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f8f9fa",
+    borderRadius: 8,
+    padding: 12,
+  },
+  trendText: {
+    fontSize: 14,
+    fontWeight: "500",
+    marginLeft: 8,
   },
 })
 
