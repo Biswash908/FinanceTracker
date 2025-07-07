@@ -28,7 +28,7 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
   }
 
   // Calculate chart dimensions
-  const chartHeight = 220
+  const chartHeight = 200
   const maxAmount = Math.max(income, Math.abs(expenses))
   const columnWidth = Math.min(80, (screenWidth - 120) / 2) // Two columns with spacing
 
@@ -46,11 +46,17 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
     })
   }
 
-  // Generate Y-axis labels with nice scale
+  // Generate Y-axis labels with nice scale - always start from 0
   const generateYAxisLabels = () => {
+    if (maxAmount === 0) return [{ value: 0, label: "0" }]
+    
     const scaleValues = generateNiceScale(maxAmount, 5)
-
-    return scaleValues.map((value) => ({
+    
+    // Ensure 0 is always included and is at the bottom
+    const valuesWithZero = scaleValues.includes(0) ? scaleValues : [...scaleValues, 0]
+    const sortedValues = valuesWithZero.sort((a, b) => b - a) // Highest to lowest
+    
+    return sortedValues.map((value) => ({
       value,
       label: formatChartLabel(value),
     }))
@@ -63,32 +69,66 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
     <View style={styles.container}>
       {/* Chart Area */}
       <View style={styles.chartContainer}>
-        {/* Y-Axis */}
-        <View style={styles.yAxis}>
-          {yAxisLabels.map((label, index) => (
-            <View key={index} style={styles.yAxisLabelContainer}>
-              <Text style={[styles.yAxisLabel, isDarkMode && { color: "#AAA" }]}>{label.label}</Text>
-            </View>
-          ))}
-        </View>
+        {/* Fixed Amount Labels - Outside Chart Area */}
+        <View style={[styles.fixedAmountColumn, isDarkMode && { backgroundColor: "#1E1E1E" }]}>
+          {yAxisLabels.map((label, index) => {
+            const isZeroLine = label.value === 0
+            const linePosition = index * (chartHeight / (yAxisLabels.length - 1))
 
-        {/* Chart */}
-        <View style={styles.chartContent}>
-          {/* Grid lines */}
-          <View style={[styles.gridContainer, { height: chartHeight }]}>
-            {yAxisLabels.map((_, index) => (
+            return (
               <View
                 key={index}
                 style={[
-                  styles.gridLine,
-                  { top: (chartHeight / (yAxisLabels.length - 1)) * index },
-                  isDarkMode && { borderColor: "#333" },
+                  styles.fixedAmountLabel,
+                  { top: linePosition - 10 },
+                  isDarkMode && { backgroundColor: "#1E1E1E" },
                 ]}
-              />
-            ))}
+              >
+                <Text
+                  style={[
+                    styles.amountLabel,
+                    isDarkMode && { color: "#FFF" },
+                    isZeroLine && {
+                      fontWeight: "bold",
+                      fontSize: 11,
+                      color: isDarkMode ? "#FFF" : "#000",
+                    },
+                  ]}
+                >
+                  {label.label}
+                </Text>
+              </View>
+            )
+          })}
+        </View>
+
+        {/* Vertical Separator */}
+        <View style={[styles.verticalSeparator, isDarkMode && { backgroundColor: "#333" }]} />
+
+        {/* Chart Content */}
+        <View style={styles.chartContent}>
+          {/* Grid lines with perfect alignment */}
+          <View style={[styles.gridContainer, { height: chartHeight }]}>
+            {yAxisLabels.map((label, index) => {
+              const isZeroLine = label.value === 0
+              const linePosition = index * (chartHeight / (yAxisLabels.length - 1))
+              
+              return (
+                <View
+                  key={index}
+                  style={[
+                    isZeroLine ? styles.zeroLine : styles.gridLine,
+                    { top: linePosition },
+                    isDarkMode && { 
+                      borderColor: isZeroLine ? (isDarkMode ? "#fff" : "#000") : "#333" 
+                    },
+                  ]}
+                />
+              )
+            })}
           </View>
 
-          {/* Columns */}
+          {/* Columns positioned from bottom */}
           <View style={[styles.columnsContainer, { height: chartHeight }]}>
             {data.map((item, index) => {
               const columnHeight = scaleMax > 0 ? (item.amount / scaleMax) * chartHeight : 0
@@ -99,7 +139,7 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
                     style={[
                       styles.column,
                       {
-                        height: Math.max(columnHeight, 4), // Minimum height
+                        height: Math.max(columnHeight, 4),
                         backgroundColor: item.color,
                         borderColor: item.color,
                         borderWidth: 1,
@@ -107,7 +147,6 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
                       },
                     ]}
                   />
-                  {/* Column Label */}
                   <Text style={[styles.columnLabel, isDarkMode && { color: "#DDD" }]}>{item.name}</Text>
                 </View>
               )
@@ -197,7 +236,7 @@ const styles = StyleSheet.create({
   },
   chartContent: {
     flex: 1,
-    paddingRight: 8,
+    position: "relative",
   },
   gridContainer: {
     position: "absolute",
@@ -211,18 +250,19 @@ const styles = StyleSheet.create({
     right: 0,
     height: 1,
     borderTopWidth: 1,
-    borderColor: "#f0f0f0",
-    borderStyle: "dashed",
+    borderColor: "#ddd",
+    borderStyle: "dotted",
   },
   columnsContainer: {
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-around",
-    paddingHorizontal: 20,
+    paddingHorizontal: 0,
   },
   columnContainer: {
     alignItems: "center",
     marginHorizontal: 8,
+    marginVertical: -24
   },
   column: {
     borderRadius: 4,
@@ -292,6 +332,43 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 16,
     color: "#666",
+  },
+  zeroLine: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    height: 1,
+    borderTopWidth: 1,
+    borderColor: "#000",
+    borderStyle: "solid",
+  },
+  fixedAmountColumn: {
+    width: 50,
+    height: 200,
+    position: "relative",
+    backgroundColor: "#ffffff",
+    zIndex: 3,
+  },
+  fixedAmountLabel: {
+    position: "absolute",
+    right: 5,
+    width: 45,
+    height: 20,
+    justifyContent: "center",
+    alignItems: "flex-end",
+    backgroundColor: "#ffffff",
+    zIndex: 4,
+  },
+  amountLabel: {
+    fontSize: 10,
+    color: "#333",
+    fontWeight: "500",
+  },
+  verticalSeparator: {
+    width: 1,
+    height: 200,
+    backgroundColor: "#e0e0e0",
+    zIndex: 2,
   },
 })
 
