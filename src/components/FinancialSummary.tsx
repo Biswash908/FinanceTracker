@@ -137,15 +137,20 @@ const FinancialSummary: React.FC<FinancialSummaryProps> = ({
       style={[
         styles.container,
         isDarkMode ? { backgroundColor: "#1E1E1E", borderColor: "#333" } : { backgroundColor: "#fff" },
+        expanded ? styles.containerExpanded : styles.containerCollapsed,
       ]}
     >
-      <TouchableOpacity
-        style={[styles.header, isDarkMode ? { backgroundColor: "#2C5282" } : { backgroundColor: "#3498db" }]}
-        onPress={() => setExpanded(!expanded)}
-      >
-        <Text style={styles.title}>Financial Summary</Text>
-        <Text style={styles.toggleIcon}>{expanded ? "▼" : "►"}</Text>
-      </TouchableOpacity>
+    <TouchableOpacity
+      style={[
+        styles.header,
+        isDarkMode ? { backgroundColor: "#2C5282" } : { backgroundColor: "#3498db" },
+        !expanded && styles.headerCollapsed, // <- Add this
+      ]}
+      onPress={() => setExpanded(!expanded)}
+    >
+      <Text style={styles.title}>Financial Summary</Text>
+      <Text style={styles.toggleIcon}>{expanded ? "▼" : "►"}</Text>
+    </TouchableOpacity>
 
       {expanded && (
         <View style={styles.content}>
@@ -304,6 +309,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     padding: 16,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+  },
+
+  headerCollapsed: {
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
   },
   title: {
     fontSize: 18,
@@ -316,6 +328,8 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
+    borderBottomLeftRadius: 12,
+    borderBottomRightRadius: 12,
   },
   summaryRow: {
     flexDirection: "row",

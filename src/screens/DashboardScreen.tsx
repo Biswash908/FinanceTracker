@@ -1,13 +1,12 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native"
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from "react-native"
 import { useTheme } from "../context/ThemeContext"
 import { useFocusEffect } from "@react-navigation/native"
 import { MaterialIcons } from "@expo/vector-icons"
 
 // Components
-import BalanceCard from "../components/BalanceCard"
 import LeanWebView from "../components/LeanWebView"
 import DateRangePicker from "../components/DateRangePicker"
 import AccountSelector from "../components/AccountSelector"
@@ -15,16 +14,10 @@ import TrendChart from "../components/TrendChart"
 import IncomeExpenseChart from "../components/IncomeExpenseChart"
 import CombinedCategoryChart from "../components/CombinedCategoryChart"
 import { ErrorBoundary } from "../components/ErrorBoundary"
-import { ProgressiveLoader } from "../components/ProgressiveLoader"
 
+import BalanceCard from "../components/BalanceCard" // This is now your Financial Overview Card
 // Services and Utils
-import {
-  fetchAccounts,
-  clearTransactionsCache,
-  fetchTransactionsMultiAccount,
-  fetchAccountBalances,
-  fetchTransactions,
-} from "../services/lean-api"
+import { fetchAccounts, clearTransactionsCache, fetchAccountBalances, fetchTransactions } from "../services/lean-api"
 import { calculateFinancials } from "../utils/categorizer"
 import { leanEntityService } from "../services/lean-entity-service"
 import { getCategoryColor, formatCategoryName } from "../utils/categorizer"
@@ -50,8 +43,9 @@ const DashboardScreen = () => {
 
   // State
   const [transactions, setTransactions] = useState([])
-  const [recentTransactions, setRecentTransactions] = useState([])
   const [loading, setLoading] = useState(true)
+  const [accountsLoading, setAccountsLoading] = useState(true) // Add accounts loading state
+  const [chartsLoading, setChartsLoading] = useState(false) // Add charts loading state
   const [error, setError] = useState(null)
   const [entityId, setEntityId] = useState<string | null>(null)
   const [lastRefresh, setLastRefresh] = useState(Date.now())
@@ -59,7 +53,6 @@ const DashboardScreen = () => {
   const [viewMode, setViewMode] = useState<"trend" | "charts">("trend")
   const [accountBalance, setAccountBalance] = useState(0)
   const [balanceLoading, setBalanceLoading] = useState(false)
-  const [accountsLoaded, setAccountsLoaded] = useState(false)
 
   // Check for bank connection when screen comes into focus
   useFocusEffect(
@@ -81,21 +74,25 @@ const DashboardScreen = () => {
       } else {
         console.log("DashboardScreen: No entity ID found")
         setEntityId(null)
-        setAccounts([])
+        setAccounts([]) // Clear accounts if no entity ID
+        setAccountsLoading(false) // Stop accounts loading
         setError("No bank account connected. Please connect your bank account in Settings.")
       }
     } catch (err) {
       console.error("DashboardScreen: Error checking bank connection:", err)
+      setAccountsLoading(false) // Stop accounts loading on error
       setError("Error checking bank connection status.")
     }
   }
 
-  // FIXED: Load accounts function - FilterContext handles auto-selection
+  // Load accounts function - FilterContext handles auto-selection
   const loadAccounts = async (currentEntityId?: string) => {
     try {
+      setAccountsLoading(true) // Start accounts loading
       const entityIdToUse = currentEntityId || entityId
       if (!entityIdToUse) {
         setError("No entity ID available. Please connect your bank account.")
+        setAccountsLoading(false)
         return
       }
 
@@ -107,13 +104,13 @@ const DashboardScreen = () => {
         "DashboardScreen: Account IDs:",
         accountsData.map((acc) => acc.id),
       )
-      setAccounts(accountsData)
-
-      // FilterContext will handle validation and auto-selection
+      setAccounts(accountsData) // Use setAccounts from useFilters
       console.log("DashboardScreen: Accounts loaded, FilterContext will handle selection validation")
     } catch (err) {
       console.error("DashboardScreen: Error loading accounts:", err)
       setError(`Failed to load accounts: ${err.message}`)
+    } finally {
+      setAccountsLoading(false) // Stop accounts loading
     }
   }
 
@@ -150,7 +147,7 @@ const DashboardScreen = () => {
       return
     }
 
-    // FIXED: Validate that selected accounts exist in available accounts
+    // Validate that selected accounts exist in available accounts
     const validSelectedAccounts = selectedAccounts.filter((accountId) =>
       accounts.some((account) => account.id === accountId),
     )
@@ -168,6 +165,7 @@ const DashboardScreen = () => {
     const loadData = async () => {
       try {
         setLoading(true)
+        setChartsLoading(true) // Start charts loading when data changes
         setError(null)
 
         await loadAccountBalances()
@@ -243,24 +241,12 @@ const DashboardScreen = () => {
 
         console.log(`DashboardScreen: Total transactions fetched across all valid accounts: ${allTransactions.length}`)
         setTransactions(allTransactions)
-
-        // Load recent transactions - use only valid accounts
-        const today = new Date()
-        const yesterday = new Date(today)
-        yesterday.setDate(yesterday.getDate() - 1)
-
-        const recentStartDate = yesterday.toISOString().split("T")[0]
-        const recentEndDate = today.toISOString().split("T")[0]
-
-        console.log(`DashboardScreen: Loading recent transactions from ${recentStartDate} to ${recentEndDate}`)
-        const recentData = await fetchTransactionsMultiAccount(validSelectedAccounts, recentStartDate, recentEndDate)
-        console.log(`DashboardScreen: Received ${recentData.transactions?.length || 0} recent transactions`)
-        setRecentTransactions(recentData.transactions || [])
       } catch (err) {
         console.error("DashboardScreen: Error loading data:", err)
         setError(err.message)
       } finally {
         setLoading(false)
+        setChartsLoading(false) // Stop charts loading
       }
     }
 
@@ -294,6 +280,12 @@ const DashboardScreen = () => {
       await checkBankConnection()
       setLastRefresh(Date.now())
     }
+  }
+
+  // Handle date range change with loading
+  const handleDateRangeChangeWithLoading = (newStartDate: string, newEndDate: string) => {
+    setChartsLoading(true) // Start loading when date changes
+    handleDateRangeChange(newStartDate, newEndDate)
   }
 
   // Prepare category data for charts
@@ -366,51 +358,30 @@ const DashboardScreen = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Account Selector */}
+        {/* Account Selector with Loading */}
         <ErrorBoundary>
           <AccountSelector
             accounts={accounts}
             selectedAccounts={selectedAccounts}
             onAccountsChange={handleAccountsChange}
+            loading={accountsLoading} // Pass loading state
           />
         </ErrorBoundary>
 
         {/* Date Range Picker */}
         <ErrorBoundary>
-          <DateRangePicker startDate={startDate} endDate={endDate} onDateRangeChange={handleDateRangeChange} />
+          <DateRangePicker
+            startDate={startDate}
+            endDate={endDate}
+            onDateRangeChange={handleDateRangeChangeWithLoading} // Use loading version
+          />
         </ErrorBoundary>
 
         <View style={{ height: 24 }} />
 
-        {/* Balance Cards */}
+        {/* Financial Overview Card (now BalanceCard) */}
         <ErrorBoundary>
-          <View style={styles.balanceCardsContainer}>
-            <BalanceCard
-              title="Total Balance"
-              amount={displayBalance}
-              type={displayBalance >= 0 ? "positive" : "negative"}
-              isDarkMode={isDarkMode}
-              loading={balanceLoading}
-            />
-
-            <View style={styles.incomeExpenseRow}>
-              <BalanceCard
-                title="Income"
-                amount={income}
-                type="income"
-                style={{ flex: 1, marginRight: 8 }}
-                isDarkMode={isDarkMode}
-              />
-
-              <BalanceCard
-                title="Expenses"
-                amount={expenses}
-                type="expense"
-                style={{ flex: 1, marginLeft: 8 }}
-                isDarkMode={isDarkMode}
-              />
-            </View>
-          </View>
+          <BalanceCard income={income} expenses={expenses} balance={displayBalance} isDarkMode={isDarkMode} />
         </ErrorBoundary>
 
         {/* View Mode Toggle */}
@@ -476,44 +447,35 @@ const DashboardScreen = () => {
             </View>
           </ErrorBoundary>
         ) : (
-          /* Charts View with Progressive Loading */
+          /* Charts View with Loading States */
           <ErrorBoundary>
-            <ProgressiveLoader
-              data={[
-                { type: "income-expense", income, expenses },
-                { type: "categories", inflowData: incomeCategoryData, expenseData: expenseCategoryData },
-              ]}
-              renderItem={(item, index) => {
-                if (item.type === "income-expense") {
-                  return (
-                    <View
-                      key={index}
-                      style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}
-                    >
-                      <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Income vs Expenses</Text>
-                      <IncomeExpenseChart income={item.income} expenses={item.expenses} isDarkMode={isDarkMode} />
-                    </View>
-                  )
-                } else {
-                  return (
-                    <View
-                      key={index}
-                      style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}
-                    >
-                      <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Category Breakdown</Text>
-                      <CombinedCategoryChart
-                        inflowData={item.inflowData}
-                        expenseData={item.expenseData}
-                        isDarkMode={isDarkMode}
-                      />
-                    </View>
-                  )
-                }
-              }}
-              batchSize={1}
-              loadingDelay={100}
-            />
+            <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+              <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Income vs Expenses</Text>
+              <IncomeExpenseChart
+                income={income}
+                expenses={expenses}
+                isDarkMode={isDarkMode}
+                loading={chartsLoading} // Pass loading state
+              />
+            </View>
+
+            <View style={[styles.chartSection, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
+              <Text style={[styles.sectionTitle, isDarkMode && { color: "#FFF" }]}>Category Breakdown</Text>
+              <CombinedCategoryChart
+                inflowData={incomeCategoryData}
+                expenseData={expenseCategoryData}
+                isDarkMode={isDarkMode}
+                loading={chartsLoading} // Pass loading state
+              />
+            </View>
           </ErrorBoundary>
+        )}
+
+        {loading && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#3498db" />
+            <Text style={[styles.loadingText, isDarkMode && { color: "#AAA" }]}>Loading dashboard...</Text>
+          </View>
         )}
 
         {showLeanWebView && <LeanWebView onClose={handleLeanWebViewClose} />}
@@ -550,12 +512,78 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "500",
   },
-  balanceCardsContainer: {
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 16,
+  },
+  loadingContainer: {
+    padding: 32,
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: "#666",
+  },
+  errorContainer: {
+    padding: 16,
+    backgroundColor: "#ffebee",
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: "#c62828",
+    fontSize: 15,
+  },
+  emptyContainer: {
+    padding: 32,
+    alignItems: "center",
+  },
+  emptyText: {
+    textAlign: "center",
+    fontSize: 16,
+    color: "#666",
+    lineHeight: 24,
+  },
+  connectionPrompt: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 24,
+    marginTop: 32,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: "#eee",
+  },
+  connectionTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: "#333",
+    marginBottom: 12,
+  },
+  connectionText: {
+    fontSize: 16,
+    color: "#666",
+    textAlign: "center",
+    lineHeight: 24,
     marginBottom: 24,
   },
-  incomeExpenseRow: {
-    flexDirection: "row",
-    marginTop: 16,
+  connectionButton: {
+    backgroundColor: "#3498db",
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  connectionButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "600",
   },
   viewModeContainer: {
     flexDirection: "row",
@@ -601,50 +629,6 @@ const styles = StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: "#eee",
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 16,
-  },
-  connectionPrompt: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    padding: 24,
-    marginTop: 32,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: "#eee",
-  },
-  connectionTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 12,
-  },
-  connectionText: {
-    fontSize: 16,
-    color: "#666",
-    textAlign: "center",
-    lineHeight: 24,
-    marginBottom: 24,
-  },
-  connectionButton: {
-    backgroundColor: "#3498db",
-    paddingHorizontal: 24,
-    paddingVertical: 12,
-    borderRadius: 8,
-  },
-  connectionButtonText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
   },
 })
 

@@ -16,6 +16,7 @@ import { Circle, G, Line, Text as SvgText } from "react-native-svg"
 import { MaterialIcons } from "@expo/vector-icons"
 import { fetchTransactions } from "../services/lean-api"
 import { leanEntityService } from "../services/lean-entity-service"
+import LoadingSpinner from "./LoadingSpinner" // Import the new spinner
 
 interface Transaction {
   timestamp?: string
@@ -110,7 +111,7 @@ const trendDataProcessor = {
 const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, endDate, isDarkMode = false }) => {
   const [zoomLevel, setZoomLevel] = useState(0.1)
   const [chartTransactions, setChartTransactions] = useState<Transaction[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true) // Start with loading true
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
 
   // Debounced zoom handler for performance
@@ -126,16 +127,18 @@ const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, en
     const loadTrendData = async () => {
       if (!selectedAccounts || selectedAccounts.length === 0) {
         setChartTransactions([])
+        setLoading(false) // Set loading to false when no accounts
         return
       }
 
       try {
-        setLoading(true)
+        setLoading(true) // Show loading spinner
         console.log("TrendChart: Loading transaction data concurrently...")
 
         const entityId = await leanEntityService.getEntityId()
         if (!entityId) {
           console.error("TrendChart: No entity ID found")
+          setLoading(false)
           return
         }
 
@@ -196,7 +199,7 @@ const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, en
       } catch (error) {
         console.error("TrendChart: Error loading transaction data:", error)
       } finally {
-        setLoading(false)
+        setLoading(false) // Hide loading spinner
       }
     }
 
@@ -519,9 +522,9 @@ const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, en
   const DateLabels = ({ x, y }: any) => {
     const labels = []
     // Calculate zero line position (same logic as GridLines)
-  const zeroIndex = yAxisData.findIndex((value) => Math.abs(value) < 0.1)
-  const zeroLinePosition = zeroIndex >= 0 ? 20 + zeroIndex * (240 / (yAxisData.length - 1)) : 130
-  const yPosition = zeroLinePosition + 15 // Position dates 15px below zero line
+    const zeroIndex = yAxisData.findIndex((value) => Math.abs(value) < 0.1)
+    const zeroLinePosition = zeroIndex >= 0 ? 20 + zeroIndex * (240 / (yAxisData.length - 1)) : 130
+    const yPosition = zeroLinePosition + 15 // Position dates 15px below zero line
 
     chartData.dateLabels.forEach((label, index) => {
       const dataPoint = chartData.dataPoints[index]
@@ -663,18 +666,45 @@ const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, en
     })
   }
 
+  // Loading state - show spinner instead of empty message
   if (loading) {
     return (
       <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
-        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>Loading trend data...</Text>
+        <LoadingSpinner 
+          size="large" 
+          message="Loading balance trend data..." 
+          isDarkMode={isDarkMode}
+        />
       </View>
     )
   }
 
-  if (chartData.data.length === 0) {
+  // No accounts selected state
+  if (!selectedAccounts || selectedAccounts.length === 0) {
     return (
       <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
-        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>No transaction data available</Text>
+        <MaterialIcons name="account-balance" size={48} color={isDarkMode ? "#555" : "#ccc"} />
+        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+          No Accounts Selected
+        </Text>
+        <Text style={[styles.emptySubtext, isDarkMode && { color: "#777" }]}>
+          Select one or more bank accounts to view the balance trend
+        </Text>
+      </View>
+    )
+  }
+
+  // No data state
+  if (chartData.data.length === 0 || chartTransactions.length === 0) {
+    return (
+      <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <MaterialIcons name="trending-up" size={48} color={isDarkMode ? "#555" : "#ccc"} />
+        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>
+          No Transaction Data Available
+        </Text>
+        <Text style={[styles.emptySubtext, isDarkMode && { color: "#777" }]}>
+          No transactions found for the selected accounts and date range
+        </Text>
       </View>
     )
   }
@@ -728,28 +758,32 @@ const TrendChart: React.FC<TrendChartProps> = ({ selectedAccounts, startDate, en
       {/* Zoom Controls */}
       <View style={[styles.zoomContainer, isDarkMode && { backgroundColor: "#333" }]}>
         <TouchableOpacity
-          style={[styles.zoomButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+          style={[styles.commonButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
           onPress={handleZoomOut}
         >
           <MaterialIcons name="zoom-out" size={18} color={isDarkMode ? "#FFF" : "#333"} />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.fitButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+          style={[styles.commonButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
           onPress={handleFitToScreen}
         >
-          <MaterialIcons name="fit-screen" size={16} color={isDarkMode ? "#FFF" : "#333"} />
-          <Text style={[styles.fitButtonText, isDarkMode && { color: "#FFF" }]}>Fit</Text>
+          {/* Ensure content is in a row for the Fit button */}
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <MaterialIcons name="fit-screen" size={16} color={isDarkMode ? "#FFF" : "#333"} />
+            <Text style={[styles.fitButtonText, isDarkMode && { color: "#FFF" }]}>Fit</Text>
+          </View>
         </TouchableOpacity>
 
-        <TouchableOpacity style={[styles.zoomLevelButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <TouchableOpacity style={[styles.commonButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
           <Text style={[styles.zoomLevelText, isDarkMode && { color: "#FFF" }]}>
-            {zoomLevel <= 0.1 ? "Fit" : `${zoomLevel.toFixed(1)}x`}
+            {/* Always show the zoom level, remove the "Fit" conditional */}
+            {`${zoomLevel.toFixed(1)}x`}
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={[styles.zoomButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
+          style={[styles.commonButton, isDarkMode && { backgroundColor: "#2A2A2A" }]}
           onPress={handleZoomIn}
         >
           <MaterialIcons name="zoom-in" size={18} color={isDarkMode ? "#FFF" : "#333"} />
@@ -968,10 +1002,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#f5f5f5",
     borderRadius: 8,
+    padding: 20,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 18,
+    fontWeight: "600",
+    color: "#333",
+    marginTop: 16,
+    textAlign: "center",
+  },
+  emptySubtext: {
+    fontSize: 14,
     color: "#666",
+    marginTop: 8,
+    textAlign: "center",
+    lineHeight: 20,
   },
   statsRow: {
     flexDirection: "row",
@@ -1004,28 +1049,14 @@ const styles = StyleSheet.create({
     padding: 4,
     alignSelf: "center",
   },
-  zoomButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  commonButton: {
+    width: 60, // Increased width to comfortably fit "Icon Fit" on one line
+    height: 30, // Slightly increased height as requested
+    borderRadius: 20, // Half of height for consistent rounded corners
     backgroundColor: "#fff",
-    justifyContent: "center",
-    alignItems: "center",
+    justifyContent: "center", // Center content horizontally
+    alignItems: "center", // Center content vertically
     marginHorizontal: 2,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 1,
-    elevation: 2,
-  },
-  fitButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: "#fff",
-    marginHorizontal: 4,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
@@ -1037,18 +1068,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: "#333",
     marginLeft: 3,
-  },
-  zoomLevelButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
-    backgroundColor: "#fff",
-    marginHorizontal: 4,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 1,
-    elevation: 2,
   },
   zoomLevelText: {
     fontSize: 11,
@@ -1083,7 +1102,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   fixedAmountColumn: {
-    width: 55,
+    width: 30,
     height: 320, // Increased for date labels
     position: "relative",
     backgroundColor: "#ffffff",
@@ -1092,7 +1111,7 @@ const styles = StyleSheet.create({
   fixedAmountLabel: {
     position: "absolute",
     right: 5,
-    width: 50,
+    width: 30,
     height: 20,
     justifyContent: "center",
     alignItems: "flex-end",

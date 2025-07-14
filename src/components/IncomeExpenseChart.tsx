@@ -1,17 +1,57 @@
 "use client"
 
 import type React from "react"
+import { useState, useEffect, useRef } from "react"
 import { View, Text, StyleSheet, Dimensions } from "react-native"
 import { generateNiceScale, formatChartLabel } from "../utils/chart-utils"
+import LoadingSpinner from "./LoadingSpinner"
 
 interface IncomeExpenseChartProps {
   income: number
   expenses: number
   isDarkMode?: boolean
+  loading?: boolean
 }
 
-const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expenses, isDarkMode = false }) => {
+const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({
+  income,
+  expenses,
+  isDarkMode = false,
+  loading = false,
+}) => {
   const screenWidth = Dimensions.get("window").width
+  const [hasInitialized, setHasInitialized] = useState(false)
+  const [lastDataHash, setLastDataHash] = useState<string>("")
+  const dataRef = useRef<{ income: number; expenses: number }>({ income: 0, expenses: 0 })
+
+  // Create a hash of the data to detect actual changes
+  const createDataHash = (inc: number, exp: number) => {
+    return `${inc}-${exp}`
+  }
+
+  // Smart loading logic - only show loading if data is actually changing
+  useEffect(() => {
+    const currentDataHash = createDataHash(income, expenses)
+
+    // If we have the same data as before, don't show loading
+    if (hasInitialized && currentDataHash === lastDataHash && !loading) {
+      return
+    }
+
+    // If loading prop is false and we have data, mark as initialized
+    if (!loading && (income !== 0 || expenses !== 0)) {
+      setHasInitialized(true)
+      setLastDataHash(currentDataHash)
+      dataRef.current = { income, expenses }
+    } else if (!loading) {
+      // If not loading and no data, still mark as initialized after a brief moment
+      const timer = setTimeout(() => {
+        setHasInitialized(true)
+        setLastDataHash(currentDataHash)
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [loading, income, expenses, hasInitialized, lastDataHash])
 
   // Prepare data
   const data = [
@@ -19,10 +59,33 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
     { name: "Expenses", amount: Math.abs(expenses), color: "#e74c3c" }, // Red
   ]
 
+  // Show loading only if we haven't initialized or data is actually changing
+  const shouldShowLoading = loading && (!hasInitialized || createDataHash(income, expenses) !== lastDataHash)
+
+  // Show loading state
+  if (shouldShowLoading) {
+    return (
+      <View style={[styles.container, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <LoadingSpinner
+          size="large"
+          message="Loading income and expense data..."
+          isDarkMode={isDarkMode}
+          style={styles.loadingContainer}
+        />
+      </View>
+    )
+  }
+
+  // Show empty state
   if (income === 0 && expenses === 0) {
     return (
-      <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
-        <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>No data available</Text>
+      <View style={[styles.container, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+        <View style={[styles.emptyContainer, isDarkMode && { backgroundColor: "#2A2A2A" }]}>
+          <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>No income or expense data available</Text>
+          <Text style={[styles.emptySubtext, isDarkMode && { color: "#777" }]}>
+            Try selecting a different date range or check your transaction data
+          </Text>
+        </View>
       </View>
     )
   }
@@ -49,13 +112,13 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
   // Generate Y-axis labels with nice scale - always start from 0
   const generateYAxisLabels = () => {
     if (maxAmount === 0) return [{ value: 0, label: "0" }]
-    
+
     const scaleValues = generateNiceScale(maxAmount, 5)
-    
+
     // Ensure 0 is always included and is at the bottom
     const valuesWithZero = scaleValues.includes(0) ? scaleValues : [...scaleValues, 0]
     const sortedValues = valuesWithZero.sort((a, b) => b - a) // Highest to lowest
-    
+
     return sortedValues.map((value) => ({
       value,
       label: formatChartLabel(value),
@@ -112,15 +175,15 @@ const IncomeExpenseChart: React.FC<IncomeExpenseChartProps> = ({ income, expense
             {yAxisLabels.map((label, index) => {
               const isZeroLine = label.value === 0
               const linePosition = index * (chartHeight / (yAxisLabels.length - 1))
-              
+
               return (
                 <View
                   key={index}
                   style={[
                     isZeroLine ? styles.zeroLine : styles.gridLine,
                     { top: linePosition },
-                    isDarkMode && { 
-                      borderColor: isZeroLine ? (isDarkMode ? "#fff" : "#000") : "#333" 
+                    isDarkMode && {
+                      borderColor: isZeroLine ? (isDarkMode ? "#fff" : "#000") : "#333",
                     },
                   ]}
                 />
@@ -213,26 +276,13 @@ const styles = StyleSheet.create({
   container: {
     marginVertical: 16,
   },
+  loadingContainer: {
+    paddingVertical: 60,
+  },
   chartContainer: {
     flexDirection: "row",
     height: 200,
     marginBottom: 16,
-  },
-  yAxis: {
-    width: 50,
-    height: 200,
-    justifyContent: "space-between",
-    paddingRight: 8,
-  },
-  yAxisLabelContainer: {
-    height: 20,
-    justifyContent: "center",
-    alignItems: "flex-end",
-  },
-  yAxisLabel: {
-    fontSize: 10,
-    color: "#666",
-    textAlign: "right",
   },
   chartContent: {
     flex: 1,
@@ -262,7 +312,7 @@ const styles = StyleSheet.create({
   columnContainer: {
     alignItems: "center",
     marginHorizontal: 8,
-    marginVertical: -24
+    marginVertical: -24,
   },
   column: {
     borderRadius: 4,
@@ -322,16 +372,27 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   emptyContainer: {
-    height: 200,
+    height: 200, // Fixed height to prevent scrolling issues
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#f5f5f5",
     borderRadius: 8,
     marginVertical: 16,
+    paddingHorizontal: 20,
   },
   emptyText: {
     fontSize: 16,
+    fontWeight: "600",
+    color: "#333",
+    marginTop: 16,
+    textAlign: "center",
+  },
+  emptySubtext: {
+    fontSize: 14,
     color: "#666",
+    marginTop: 8,
+    textAlign: "center",
+    lineHeight: 20,
   },
   zeroLine: {
     position: "absolute",

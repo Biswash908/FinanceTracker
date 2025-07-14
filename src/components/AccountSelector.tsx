@@ -1,10 +1,11 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from "react-native"
 import { useTheme } from "../context/ThemeContext"
 import { MaterialIcons } from "@expo/vector-icons"
+import LoadingSpinner from "./LoadingSpinner"
 
 interface Account {
   id: string
@@ -21,11 +22,38 @@ interface AccountSelectorProps {
   accounts: Account[]
   selectedAccounts: string[]
   onAccountsChange: (accountIds: string[]) => void
+  loading?: boolean
 }
 
-const AccountSelector: React.FC<AccountSelectorProps> = ({ accounts, selectedAccounts, onAccountsChange }) => {
+const AccountSelector: React.FC<AccountSelectorProps> = ({
+  accounts,
+  selectedAccounts,
+  onAccountsChange,
+  loading = false,
+}) => {
   const { isDarkMode } = useTheme()
   const [expanded, setExpanded] = useState(true)
+  const [hasInitialized, setHasInitialized] = useState(false)
+  const [lastFetchTime, setLastFetchTime] = useState<number | null>(null)
+  const accountsRef = useRef<Account[]>([])
+
+  // Smart loading logic - only show loading if we haven't initialized or accounts are actually changing
+  useEffect(() => {
+    const now = Date.now()
+    const shouldRefresh = !hasInitialized || !lastFetchTime || now - lastFetchTime > 5 * 60 * 1000 // 5 minutes
+
+    // If we have accounts and don't need to refresh, don't show loading
+    if (!shouldRefresh && accounts.length > 0 && accountsRef.current.length > 0) {
+      return
+    }
+
+    // If loading prop is false and we have accounts, mark as initialized
+    if (!loading && accounts.length > 0) {
+      setHasInitialized(true)
+      setLastFetchTime(now)
+      accountsRef.current = accounts
+    }
+  }, [loading, accounts, hasInitialized, lastFetchTime])
 
   // Group accounts by bank/entity
   const accountsByBank = accounts.reduce(
@@ -73,12 +101,19 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({ accounts, selectedAcc
   const isAllSelected = selectedAccounts.length === accounts.length && accounts.length > 0
   const isPartiallySelected = selectedAccounts.length > 0 && selectedAccounts.length < accounts.length
 
+  // Show loading only if we haven't initialized and are actually loading
+  const shouldShowLoading = loading && (!hasInitialized || accounts.length === 0)
+
   return (
     <View style={[styles.container, isDarkMode && { backgroundColor: "#1E1E1E", borderColor: "#333" }]}>
       <TouchableOpacity style={styles.header} onPress={() => setExpanded(!expanded)}>
         <View style={styles.headerLeft}>
-          <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>Bank Accounts ({accounts.length})</Text>
-          <Text style={[styles.subtitle, isDarkMode && { color: "#AAA" }]}>{selectedAccounts.length} selected</Text>
+          <Text style={[styles.title, isDarkMode && { color: "#FFF" }]}>
+            Bank Accounts {!shouldShowLoading && `(${accounts.length})`}
+          </Text>
+          {!shouldShowLoading && (
+            <Text style={[styles.subtitle, isDarkMode && { color: "#AAA" }]}>{selectedAccounts.length} selected</Text>
+          )}
         </View>
 
         <View style={styles.headerRight}>
@@ -93,7 +128,14 @@ const AccountSelector: React.FC<AccountSelectorProps> = ({ accounts, selectedAcc
 
       {expanded && (
         <View style={styles.content}>
-          {accounts.length === 0 ? (
+          {shouldShowLoading ? (
+            <LoadingSpinner
+              size="large"
+              message="Loading bank accounts..."
+              isDarkMode={isDarkMode}
+              style={styles.loadingContainer}
+            />
+          ) : accounts.length === 0 ? (
             <View style={styles.emptyState}>
               <MaterialIcons name="account-balance" size={48} color={isDarkMode ? "#555" : "#ccc"} />
               <Text style={[styles.emptyText, isDarkMode && { color: "#AAA" }]}>No bank accounts connected</Text>
@@ -227,6 +269,9 @@ const styles = StyleSheet.create({
   content: {
     paddingHorizontal: 16,
     paddingBottom: 16,
+  },
+  loadingContainer: {
+    paddingVertical: 40,
   },
   emptyState: {
     alignItems: "center",

@@ -1,9 +1,9 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { WebView } from "react-native-webview"
-import { View, Button, StyleSheet, Text, ActivityIndicator, Alert, Modal, StatusBar } from "react-native"
+import { View, Button, StyleSheet, Text, ActivityIndicator, Alert, Modal, StatusBar, Platform } from "react-native"
 import { APP_TOKEN } from "@env"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import { leanCustomerService } from "../services/lean-customer-service"
@@ -16,9 +16,10 @@ interface LeanWebViewProps {
 }
 
 const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
-  const [isLoading, setIsLoading] = useState(true)
+  // Removed isLoading state, as Lean SDK will manage its own loading UI
   const [error, setError] = useState<string | null>(null)
   const [debugInfo, setDebugInfo] = useState<string>("")
+  const webViewRef = useRef(null)
 
   // State for Lean SDK credentials
   const [appToken, setAppToken] = useState<string>(APP_TOKEN || "")
@@ -31,6 +32,8 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
     const initializeLeanCredentials = async () => {
       try {
         setInitializingCredentials(true)
+        // No setIsLoading(true) here, as we're removing the overlay
+        setError(null) // Clear any previous errors
 
         // Get the current user ID from AsyncStorage
         const userToken = await AsyncStorage.getItem("userToken")
@@ -40,7 +43,6 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
 
         // Extract user ID from token or use the token itself
         const userId = userToken
-
         console.log("Initializing Lean credentials for user:", userId)
 
         // Get or create a Lean customer ID for this user
@@ -64,6 +66,8 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
 
     initializeLeanCredentials()
   }, [])
+
+  // Removed the fallback timeout useEffect, as there's no overlay to dismiss
 
   // Function to fetch entity ID after successful connection
   const fetchEntityId = async (customerId: string, customerToken: string): Promise<string | null> => {
@@ -131,7 +135,6 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
         if (altResponse.ok) {
           const altData = await altResponse.json()
           console.log("Alternative entities response:", altData)
-
           if (altData.payload && altData.payload.entities && altData.payload.entities.length > 0) {
             const entity = altData.payload.entities[altData.payload.entities.length - 1]
             const entityId = entity.id || entity.entity_id
@@ -252,7 +255,6 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
         }
 
         message += `\n\nYour financial data is now available in the app.`
-
         return message
       } else {
         return `Welcome ${userName}!\n\nBank connection successful! Your financial data is now available in the app.`
@@ -267,76 +269,124 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
   const getInjectedJS = () => `
     console.log("Injecting Lean SDK script...");
     
+    // iOS-specific detection
+    if (window.webkit && window.webkit.messageHandlers) {
+      console.log("iOS WebKit detected");
+    }
+    
     // Add console.log listener to capture logs from WebView
     (function() {
       var originalConsoleLog = console.log;
       console.log = function() {
         originalConsoleLog.apply(console, arguments);
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'console.log',
-          data: Array.from(arguments).map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ')
-        }));
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'console.log',
+            data: Array.from(arguments).map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ')
+          }));
+        }
       };
       
       var originalConsoleError = console.error;
       console.error = function() {
         originalConsoleError.apply(console, arguments);
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'console.error',
-          data: Array.from(arguments).map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ')
-        }));
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'console.error',
+            data: Array.from(arguments).map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ')
+          }));
+        }
       };
     })();
     
-    var script = document.createElement('script');
-    script.src = 'https://cdn.leantech.me/link/loader/prod/ae/latest/lean-link-loader.min.js';
-    script.onload = function() {
-      console.log("Lean SDK script loaded successfully");
-      
-      try {
-        console.log("Initializing Lean connection with customer token");
+    // iOS-specific initialization function
+    function initializeLean() {
+      console.log("Attempting to initialize Lean SDK...");
+      var script = document.createElement('script');
+      script.src = 'https://cdn.leantech.me/link/loader/prod/ae/latest/lean-link-loader.min.js';
+      script.onload = function() {
+        console.log("Lean SDK script loaded successfully");
         
-        Lean.connect({
-          app_token: "${appToken}",
-          customer_id: "${customerId}",
-          permissions: ["identity", "accounts", "balance", "transactions"],
-          sandbox: true,
-          access_token: "${accessToken}",
-          callback: function(response) {
-            console.log("Lean callback received:", JSON.stringify(response));
+        try {
+          console.log("Initializing Lean connection with customer token");
+          
+          // Add delay for iOS WebView
+          setTimeout(function() {
+            if (typeof Lean !== 'undefined') {
+              console.log("Lean object found, connecting...");
+              Lean.connect({
+                app_token: "${appToken}",
+                customer_id: "${customerId}",
+                permissions: ["identity", "accounts", "balance", "transactions"],
+                sandbox: true,
+                access_token: "${accessToken}",
+                callback: function(response) {
+                  console.log("Lean callback received:", JSON.stringify(response));
+                  if (window.ReactNativeWebView) {
+                    window.ReactNativeWebView.postMessage(JSON.stringify({
+                      type: 'lean-response',
+                      data: response
+                    }));
+                  }
+                }
+              });
+              // Post message immediately after Lean.connect is called
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'lean-connect-attempted',
+                  data: 'Lean.connect was called.'
+                }));
+              }
+            } else {
+              console.error("Lean SDK not available after load.");
+              if (window.ReactNativeWebView) {
+                window.ReactNativeWebView.postMessage(JSON.stringify({
+                  type: 'error',
+                  data: 'Lean SDK not available after load.'
+                }));
+              }
+            }
+          }, ${Platform.OS === "ios" ? 3000 : 100}); // Increased delay for iOS to 3 seconds
+        } catch (err) {
+          console.error("Error initializing Lean:", err.message);
+          if (window.ReactNativeWebView) {
             window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'lean-response',
-              data: response
+              type: 'error',
+              data: 'Error initializing Lean: ' + err.message
             }));
           }
-        });
-      } catch (err) {
-        console.error("Error initializing Lean:", err.message);
-        window.ReactNativeWebView.postMessage(JSON.stringify({
-          type: 'error',
-          data: 'Error initializing Lean: ' + err.message
-        }));
-      }
-    };
+        }
+      };
+      
+      script.onerror = function(err) {
+        console.error("Failed to load Lean SDK script:", err);
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'error',
+            data: 'Failed to load Lean SDK script'
+          }));
+        }
+      };
+      
+      document.head.appendChild(script);
+    }
     
-    script.onerror = function(err) {
-      console.error("Failed to load Lean SDK:", err);
-      window.ReactNativeWebView.postMessage(JSON.stringify({
-        type: 'error',
-        data: 'Failed to load Lean SDK'
-      }));
-    };
-    
-    document.head.appendChild(script);
+    // Initialize when DOM is ready
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeLean);
+    } else {
+      initializeLean();
+    }
     true;
   `
 
-  const htmlContent = `
-<!DOCTYPE html>
+  const htmlContent = `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="msapplication-tap-highlight" content="no">
     <meta http-equiv="Content-Security-Policy" content="
       default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;
       script-src * 'unsafe-inline' 'unsafe-eval';
@@ -348,6 +398,10 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
     <style>
       * {
         box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
       }
       html, body {
         margin: 0;
@@ -358,12 +412,15 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
         background-color: #f5f5f5;
         overflow-x: hidden;
         -webkit-overflow-scrolling: touch;
+        -webkit-text-size-adjust: 100%;
+        -ms-text-size-adjust: 100%;
       }
       body {
         min-height: 100vh;
         min-height: -webkit-fill-available;
-        padding-bottom: env(safe-area-inset-bottom);
-        padding-top: env(safe-area-inset-top);
+        padding: 0;
+        margin: 0;
+        position: relative;
       }
       #loading {
         display: flex;
@@ -382,12 +439,14 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
       button, input, select, textarea, a {
         min-height: 44px;
         touch-action: manipulation;
+        -webkit-appearance: none;
+        -webkit-tap-highlight-color: transparent;
       }
-      /* Fix for iOS safe area */
-      @supports (padding: max(0px)) {
-        body {
-          padding-bottom: max(20px, env(safe-area-inset-bottom));
-        }
+      /* iOS specific fixes */
+      input, textarea, select {
+        -webkit-appearance: none;
+        -webkit-border-radius: 0;
+        border-radius: 0;
       }
     </style>
   </head>
@@ -396,9 +455,20 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
       <p>Loading bank connection...</p>
       <p style="font-size: 14px; color: #888;">Please wait while we prepare your secure connection...</p>
     </div>
+    <script>
+      // iOS WebView ready check
+      document.addEventListener('DOMContentLoaded', function() {
+        console.log('DOM Content Loaded - iOS WebView Ready');
+        if (window.ReactNativeWebView) {
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'dom-ready',
+            data: 'DOM is ready for iOS'
+          }));
+        }
+      });
+    </script>
   </body>
-</html>
-`
+</html>`
 
   const handleMessage = async (event) => {
     try {
@@ -407,16 +477,22 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
       if (message.type === "console.log" || message.type === "console.error") {
         console.log(`WebView ${message.type}:`, message.data)
         setDebugInfo((prev) => prev + "\n" + message.data)
+      } else if (message.type === "dom-ready") {
+        console.log("WebView DOM Ready:", message.data)
+      } else if (message.type === "lean-connect-attempted") {
+        console.log("Lean.connect attempted:", message.data)
+        // No setIsLoading(false) here, as we're removing the overlay
       } else if (message.type === "error") {
         console.error("WebView error:", message.data)
         setError(message.data)
+        // No setIsLoading(false) here, as we're removing the overlay
       } else if (message.type === "lean-response") {
         const response = message.data
         console.log("Lean SDK response:", response)
+        // No setIsLoading(false) here, as we're removing the overlay
 
         if (response.status === "SUCCESS") {
           console.log("Bank connection successful, fetching entity ID...")
-
           try {
             // Fetch the entity ID after successful connection
             const entityId = await fetchEntityId(customerId, accessToken)
@@ -432,6 +508,7 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
 
               // Create detailed success message with the real user name
               const detailedMessage = await createSuccessMessage(entityId, userName, bankName)
+
               onClose("SUCCESS", detailedMessage, entityId)
             } else {
               console.warn("Could not retrieve entity ID after connection")
@@ -452,6 +529,7 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
         // Try to parse as a direct Lean response
         const response = message
         if (response.status) {
+          // No setIsLoading(false) here, as we're removing the overlay
           if (response.status === "SUCCESS") {
             onClose("SUCCESS", response.message || "Bank connected successfully")
           } else if (response.status === "ERROR") {
@@ -463,6 +541,7 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
       }
     } catch (error) {
       console.error("Error parsing WebView message:", error)
+      // No setIsLoading(false) here, as we're removing the overlay
     }
   }
 
@@ -518,52 +597,58 @@ const LeanWebView: React.FC<LeanWebViewProps> = ({ onClose }) => {
           </View>
         ) : (
           <>
-            {isLoading && (
-              <View style={styles.loadingOverlay}>
-                <ActivityIndicator size="large" color="#3498db" />
-                <Text style={styles.loadingText}>Loading bank connection...</Text>
-              </View>
-            )}
-
+            {/* Removed isLoading overlay */}
             {error && customerId && (
               <View style={styles.errorBanner}>
                 <Text style={styles.errorBannerText}>Error: {error}</Text>
                 <Button title="Try Again" onPress={() => setError(null)} />
               </View>
             )}
-
             {customerId && accessToken && (
               <WebView
+                ref={webViewRef}
                 source={{ html: htmlContent }}
                 originWhitelist={["*"]}
                 javaScriptEnabled={true}
                 domStorageEnabled={true}
-                startInLoadingState={true}
+                startInLoadingState={Platform.OS === "android"} // Keep for Android if needed
                 injectedJavaScript={getInjectedJS()}
+                injectedJavaScriptBeforeContentLoaded={`
+    window.isReactNativeWebView = true;
+    true;
+  `}
                 onMessage={handleMessage}
-                onLoadStart={() => setIsLoading(true)}
-                onLoadEnd={() => setIsLoading(false)}
+                onLoadStart={() => {
+                  /* No setIsLoading(true) here */
+                }}
+                onLoadEnd={() => {
+                  console.log("WebView onLoadEnd fired (initial HTML loaded).")
+                }}
                 onError={({ nativeEvent }) => {
                   setError(nativeEvent.description || "Failed to load")
-                  setIsLoading(false)
                   console.error("WebView error:", nativeEvent)
                 }}
                 style={styles.webView}
-                allowsInlineMediaPlaybook={true}
+                allowsInlineMediaPlayback={true}
                 mediaPlaybackRequiresUserAction={false}
                 mixedContentMode="always"
-                scalesPageToFit={false}
+                scalesPageToFit={Platform.OS === "ios"}
                 scrollEnabled={true}
-                bounces={true}
-                showsVerticalScrollIndicator={true}
+                bounces={Platform.OS === "android"}
+                showsVerticalScrollIndicator={Platform.OS === "android"}
                 showsHorizontalScrollIndicator={false}
-                automaticallyAdjustContentInsets={true}
-                contentInsetAdjustmentBehavior="automatic"
+                automaticallyAdjustContentInsets={Platform.OS === "android"}
+                contentInsetAdjustmentBehavior={Platform.OS === "ios" ? "never" : undefined}
                 keyboardDisplayRequiresUserAction={false}
                 allowsBackForwardNavigationGestures={false}
-                decelerationRate={0.998}
-                overScrollMode="always"
-                nestedScrollEnabled={true}
+                decelerationRate={Platform.OS === "ios" ? "normal" : 0.998}
+                overScrollMode={Platform.OS === "android" ? "always" : undefined}
+                nestedScrollEnabled={Platform.OS === "android"}
+                allowsFullscreenVideo={true}
+                allowsProtectedMedia={true}
+                dataDetectorTypes={Platform.OS === "ios" ? "none" : undefined}
+                hideKeyboardAccessoryView={true}
+                suppressMenuItems={Platform.OS === "ios" ? ["copy", "paste", "select", "selectAll"] : undefined}
               />
             )}
           </>
@@ -609,17 +694,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "white",
   },
-  loadingOverlay: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.9)",
-    zIndex: 999,
-  },
+  // Removed loadingOverlay style
   loadingText: {
     marginTop: 10,
     fontSize: 16,

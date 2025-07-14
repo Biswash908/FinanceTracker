@@ -1,104 +1,95 @@
-import { View, Text, StyleSheet, ActivityIndicator } from "react-native"
+"use client"
+
 import type React from "react"
+import { View, Text, StyleSheet } from "react-native"
+import { useTheme } from "../context/ThemeContext"
 
 interface BalanceCardProps {
-  title: string
-  amount: number
-  type: "positive" | "negative" | "income" | "expense"
-  style?: object
+  income: number
+  expenses: number
+  balance: number
   isDarkMode?: boolean
   currency?: string
-  loading?: boolean
 }
 
-const BalanceCard: React.FC<BalanceCardProps> = ({
-  title,
-  amount,
-  type,
-  style,
-  isDarkMode,
-  currency = "AED",
-  loading = false,
-}) => {
+const BalanceCard: React.FC<BalanceCardProps> = ({ income, expenses, balance, isDarkMode, currency = "AED" }) => {
+  const { isDarkMode: contextIsDarkMode } = useTheme()
+  const currentIsDarkMode = isDarkMode ?? contextIsDarkMode // Use prop if provided, else context
+
   // Format currency with commas
-  const formatCurrency = (amount, currency = "AED") => {
-    return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`
-  }
-
-  // Get color based on type
-  const getColor = () => {
-    switch (type) {
-      case "positive":
-      case "income":
-        return "#27ae60" // Green
-      case "negative":
-      case "expense":
-        return "#e74c3c" // Red
-      default:
-        return "#333"
-    }
-  }
-
-  // Get background color based on type
-  const getBackgroundColor = () => {
-    if (isDarkMode) return "#1E1E1E"
-
-    switch (type) {
-      case "positive":
-      case "income":
-        return "#e6f7ef" // Light green
-      case "negative":
-      case "expense":
-        return "#fdecea" // Light red
-      default:
-        return "#f5f5f5"
-    }
+  const formatCurrency = (amount: number, currencyCode = "AED") => {
+    return `${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencyCode}`
   }
 
   const styles = StyleSheet.create({
     container: {
+      borderRadius: 12,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.1,
+      shadowRadius: 4,
+      elevation: 3,
+      marginBottom: 24,
+      borderWidth: 1,
+      borderColor: currentIsDarkMode ? "#333" : "#eee",
       padding: 16,
-      borderRadius: 8,
-      width: "100%",
-      marginBottom: 16,
+      backgroundColor: currentIsDarkMode ? "#1E1E1E" : "#fff",
     },
-    title: {
-      fontSize: 16,
-      fontWeight: "600",
+    summaryRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
       marginBottom: 8,
     },
-    amount: {
-      fontSize: 24,
+    label: {
+      fontSize: 16,
+      color: currentIsDarkMode ? "#DDD" : "#555",
+    },
+    value: {
+      fontSize: 16,
+      fontWeight: "500",
+    },
+    balanceRow: {
+      marginTop: 8,
+      paddingTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: currentIsDarkMode ? "#444" : "#eee",
+    },
+    balanceLabel: {
+      fontSize: 18,
+      fontWeight: "600",
+      color: currentIsDarkMode ? "#EEE" : "#333",
+    },
+    balanceValue: {
+      fontSize: 18,
       fontWeight: "bold",
     },
-    smallAmount: {
-    fontSize: 15, // smaller size for income/expense
-    fontWeight: "bold",
-  },
+    incomeText: {
+      color: "#27ae60",
+    },
+    expenseText: {
+      color: "#e74c3c",
+    },
   })
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: getBackgroundColor() },
-        isDarkMode && { borderColor: "#333" },
-        style,
-      ]}
-    >
-      <Text style={[styles.title, isDarkMode && { color: "#DDD" }]}>{title}</Text>
-      {loading ? (
-        <ActivityIndicator size="small" color={getColor()} />
-      ) : (
-<Text
-  style={[
-    type === "income" || type === "expense" ? styles.smallAmount : styles.amount,
-    { color: getColor() }
-  ]}
->
-  {type === "income" || type === "positive" ? "+" : "-"} {formatCurrency(Math.abs(amount), currency)}
-</Text>
-      )}
+    <View style={styles.container}>
+      <View style={styles.summaryRow}>
+        <Text style={styles.label}>Income:</Text>
+        <Text style={[styles.value, styles.incomeText]}>+{formatCurrency(income, currency)}</Text>
+      </View>
+
+      <View style={styles.summaryRow}>
+        <Text style={styles.label}>Expenses:</Text>
+        <Text style={[styles.value, styles.expenseText]}>-{formatCurrency(expenses, currency)}</Text>
+      </View>
+
+      <View style={[styles.summaryRow, styles.balanceRow]}>
+        <Text style={styles.balanceLabel}>Balance:</Text>
+        <Text style={[styles.balanceValue, balance >= 0 ? styles.incomeText : styles.expenseText]}>
+          {balance >= 0 ? "+" : "-"}
+          {formatCurrency(Math.abs(balance), currency)}
+        </Text>
+      </View>
     </View>
   )
 }
